@@ -1,0 +1,173 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0e0e10;
+  --foreground: #ededed;
+  --primary: #e50914;
+  --primary-hover: #b80710;
+  --secondary: #6d1cb4;
+  --accent: #ff003c;
+  --glitch1: #00f0ff;
+  --glitch2: #ff00c8;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans, Arial, Helvetica, sans-serif);
+  overflow-x: hidden;
+}
+
+/* Animation effects */
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes glitch {
+  0% {
+    text-shadow: 0.05em 0 0 var(--glitch1), -0.05em -0.025em 0 var(--glitch2);
+    transform: translate(0.025em, 0.0125em);
+  }
+  
+  15% {
+    text-shadow: -0.05em -0.025em 0 var(--glitch1), 0.025em 0.025em 0 var(--glitch2);
+    transform: translate(-0.025em, -0.0125em);
+  }
+  
+  50% {
+    text-shadow: 0.025em 0.05em 0 var(--glitch1), 0.05em 0 0 var(--glitch2);
+    transform: translate(0.0125em, 0);
+  }
+  
+  100% {
+    text-shadow: -0.025em 0 0 var(--glitch1), -0.025em -0.025em 0 var(--glitch2);
+    transform: translate(-0.0125em, 0.0125em);
+  }
+}
+
+.text-glitch {
+  animation: glitch 1.5s infinite ease alternate-reverse;
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+.scanline {
+  animation: scanline 8s linear infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(0.98);
+  }
+}
+
+.pulse {
+  animation: pulse 2s infinite ease-in-out;
+}
+
+@keyframes flicker {
+  0%, 19.999%, 22%, 62.999%, 64%, 64.999%, 70%, 100% {
+    opacity: 1;
+  }
+  20%, 21.999%, 63%, 63.999%, 65%, 69.999% {
+    opacity: 0.33;
+  }
+}
+
+.flicker {
+  animation: flicker 6s infinite alternate;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(20, 20, 24, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-hover);
+}
+
+/* Card hover effect */
+.battle-card {
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.battle-card:hover {
+  transform: translateY(-5px) scale(1.02);
+  box-shadow: 0 0 15px rgba(229, 9, 20, 0.3), 0 0 5px rgba(229, 9, 20, 0.1);
+}
+
+/* Neo-grid backgrounds */
+.neo-grid {
+  background-image: 
+    linear-gradient(rgba(229, 9, 20, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(229, 9, 20, 0.1) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.battle-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.battle-btn:after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    to bottom right,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0) 60%
+  );
+  transform: rotate(45deg);
+  transition: all 0.3s;
+  opacity: 0;
+}
+
+.battle-btn:hover:after {
+  left: 100%;
+  top: 100%;
+  opacity: 1;
+}
+
+/* Loading animation */
+@keyframes loadBar {
+  0% { width: 0; }
+  100% { width: 100%; }
+}
+
+.loading-bar {
+  animation: loadBar 2s linear infinite;
+}
