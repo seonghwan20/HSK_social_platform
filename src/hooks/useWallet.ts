@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 
 export function useWallet() {
@@ -7,9 +7,20 @@ export function useWallet() {
   const [isConnected, setIsConnected] = useState(false);
   const [balance, setBalance] = useState('');
   
-  useEffect(() => {
-    checkConnection();
-    
+  // Create a memoized handleAccountsChanged function that won't change on rerenders
+  const handleAccountsChanged = useCallback((accounts) => {
+    if (accounts.length > 0) {
+      setAccount(accounts[0]);
+      setIsConnected(true);
+    } else {
+      setAccount('');
+      setBalance('');
+      setIsConnected(false);
+    }
+  }, []);
+  
+  // Set up ethereum event listeners
+  const setupEventListeners = useCallback(() => {
     if (window.ethereum) {
       window.ethereum.on('accountsChanged', handleAccountsChanged);
       window.ethereum.on('chainChanged', () => {
@@ -26,7 +37,17 @@ export function useWallet() {
         });
       }
     };
-  }, []);
+  }, [handleAccountsChanged]);
+  
+  useEffect(() => {
+    // Check if wallet is already connected
+    checkConnection();
+    
+    // Setup event listeners for wallet changes
+    const cleanup = setupEventListeners();
+    
+    return cleanup;
+  }, [setupEventListeners]);
   
   useEffect(() => {
     // Fetch balance when account changes
@@ -52,6 +73,7 @@ export function useWallet() {
   const checkConnection = async () => {
     if (window.ethereum) {
       try {
+        // This will detect if MetaMask is already connected
         const web3Provider = new ethers.providers.Web3Provider(window.ethereum);
         const accounts = await web3Provider.listAccounts();
         
@@ -69,12 +91,20 @@ export function useWallet() {
   const connectWallet = async () => {
     if (window.ethereum) {
       try {
-        const web3Provider = new ethers.providers.Web3Provider(window.ethereum);
+        // Request accounts access
         const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const web3Provider = new ethers.providers.Web3Provider(window.ethereum);
         
-        setAccount(accounts[0]);
-        setProvider(web3Provider);
-        setIsConnected(true);
+        if (accounts.length > 0) {
+          setAccount(accounts[0]);
+          setProvider(web3Provider);
+          setIsConnected(true);
+          
+          // Fetch balance immediately after connection
+          setTimeout(() => {
+            fetchBalance();
+          }, 100);
+        }
       } catch (error) {
         console.error("Wallet connection error:", error);
       }
@@ -89,16 +119,6 @@ export function useWallet() {
     setIsConnected(false);
     // Note: MetaMask doesn't support programmatic disconnection
     // This just resets the state in our app
-  };
-  
-  const handleAccountsChanged = (accounts) => {
-    if (accounts.length > 0) {
-      setAccount(accounts[0]);
-    } else {
-      setAccount('');
-      setBalance('');
-      setIsConnected(false);
-    }
   };
   
   return {

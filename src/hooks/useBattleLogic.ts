@@ -138,11 +138,37 @@ export function useBattleLogic() {
   useEffect(() => {
     try {
       checkConnection();
+      
+      // Set up account change listener
+      if (typeof window !== 'undefined' && (window as any).ethereum) {
+        // Setup event listeners for MetaMask
+        (window as any).ethereum.on('accountsChanged', handleAccountChange);
+        (window as any).ethereum.on('chainChanged', () => window.location.reload());
+        
+        // Clean up event listeners when component unmounts
+        return () => {
+          if ((window as any).ethereum) {
+            (window as any).ethereum.removeListener('accountsChanged', handleAccountChange);
+            (window as any).ethereum.removeListener('chainChanged', () => window.location.reload());
+          }
+        };
+      }
     } catch (err) {
       setError("초기화 중 오류가 발생했습니다.");
       console.error("초기화 오류:", err);
     }
   }, []);
+  
+  // Handle account changes
+  const handleAccountChange = (accounts: string[]) => {
+    if (accounts.length > 0) {
+      setAccount(accounts[0]);
+      setIsConnected(true);
+    } else {
+      setAccount('');
+      setIsConnected(false);
+    }
+  };
   
   // 지갑 연결 확인
   const checkConnection = async () => {
@@ -167,15 +193,32 @@ export function useBattleLogic() {
   const connectWallet = async () => {
     if (typeof window !== 'undefined' && typeof (window as any).ethereum !== 'undefined') {
       try {
-        const web3Provider = new ethers.BrowserProvider((window as any).ethereum);
+        // wallet_requestPermissions를 사용하여 이전 연결 상태를 무시하고 
+        // 항상 새로운 연결 확인 창이 표시되도록 함
+        await (window as any).ethereum.request({
+          method: 'wallet_requestPermissions',
+          params: [{
+            eth_accounts: {}
+          }]
+        });
+        
+        // 권한 요청 후 계정 접근 요청
         const accounts = await (window as any).ethereum.request({ 
           method: 'eth_requestAccounts' 
         });
         
+        // Then initialize the provider
+        const web3Provider = new ethers.BrowserProvider((window as any).ethereum);
+        
+        // Update state
         setAccount(accounts[0]);
         setProvider(web3Provider as any);
         setIsConnected(true);
         setError(null);
+        
+        // No need to add duplicate event listeners here
+        // They are already set up in the useEffect
+        
       } catch (error) {
         setError("지갑 연결에 실패했습니다.");
         console.error("지갑 연결 오류:", error);
@@ -183,6 +226,40 @@ export function useBattleLogic() {
     } else {
       setError("메타마스크가 설치되어 있지 않습니다.");
       alert("메타마스크를 설치해주세요!");
+    }
+  };
+  
+  // 지갑 연결 해제
+  const disconnectWallet = async () => {
+    if (typeof window !== 'undefined' && typeof (window as any).ethereum !== 'undefined') {
+      try {
+        // This function is now called after the user confirms in the custom modal
+        // No need for window.confirm here
+        
+        // wallet_revokePermissions 메소드를 사용하여 이 사이트에 대한 권한 해제 시도
+        try {
+          await (window as any).ethereum.request({
+            method: 'wallet_revokePermissions',
+            params: [{
+              eth_accounts: {}
+            }]
+          });
+        } catch (revokeError) {
+          // wallet_revokePermissions가 지원되지 않을 경우 무시
+          console.log("권한 해제 지원되지 않음:", revokeError);
+        }
+        
+        // 앱 상태 초기화
+        setAccount('');
+        setProvider(null);
+        setIsConnected(false);
+        setError(null);
+        
+        console.log("지갑 연결이 해제되었습니다.");
+      } catch (error) {
+        setError("지갑 연결 해제 중 오류가 발생했습니다.");
+        console.error("지갑 연결 해제 오류:", error);
+      }
     }
   };
   
@@ -803,6 +880,7 @@ export function useBattleLogic() {
     setAllAnswersCorrect,
     
     connectWallet,
+    disconnectWallet,
     handleFileUpload,
     handleViewBattleDetails,
     handleJoinCommittee,

@@ -1,11 +1,35 @@
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useWallet } from '../hooks/useWallet';
 import WalletConnect from './WalletConnect';
 import { useBattleLogic } from '../hooks/useBattleLogic';
 
 export default function Header() {
   const { account, isConnected, connectWallet } = useBattleLogic();
-  const balance = "0.5482"; // You can connect this with the real balance from useBattleLogic later
+  const [displayBalance, setDisplayBalance] = useState("0.0000");
+  
+  // Get updated balance from provider
+  useEffect(() => {
+    const getBalance = async () => {
+      if (typeof window !== 'undefined' && (window as any).ethereum && isConnected && account) {
+        try {
+          // This is a simple way to get balance - in a real app, you'd use your wallet service
+          const balance = await (window as any).ethereum.request({
+            method: 'eth_getBalance',
+            params: [account, 'latest']
+          });
+          
+          // Convert from wei to ETH
+          const ethBalance = parseInt(balance, 16) / 1e18;
+          setDisplayBalance(ethBalance.toFixed(4));
+        } catch (error) {
+          console.error("Error getting balance:", error);
+          setDisplayBalance("0.0000");
+        }
+      }
+    };
+    
+    getBalance();
+  }, [account, isConnected]);
   
   return (
     <header className="fixed top-0 left-0 right-0 bg-gray-900 border-b border-gray-800 z-50 py-4 px-6">
@@ -36,7 +60,7 @@ export default function Header() {
           {isConnected && (
             <div className="hidden md:block text-sm font-medium text-white">
               <span className="text-gray-400">Balance:</span>
-              <span className="ml-1">{balance || '0.00'} ETH</span>
+              <span className="ml-1">{displayBalance} ETH</span>
             </div>
           )}
           
