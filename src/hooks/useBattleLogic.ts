@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 
@@ -137,10 +139,12 @@ export function useBattleLogic() {
   // 초기화 함수
   useEffect(() => {
     try {
+      console.log("🔄 useBattleLogic 초기화 시작");
       checkConnection();
+      console.log("✅ useBattleLogic 초기화 완료");
     } catch (err) {
+      console.error("❌ 초기화 오류:", err);
       setError("초기화 중 오류가 발생했습니다.");
-      console.error("초기화 오류:", err);
     }
   }, []);
   
@@ -148,18 +152,25 @@ export function useBattleLogic() {
   const checkConnection = async () => {
     if (typeof window !== 'undefined' && (window as any).ethereum) {
       try {
+        console.log("🔍 메타마스크 연결 확인 중...");
         const web3Provider = new ethers.BrowserProvider((window as any).ethereum);
         const accounts = await web3Provider.listAccounts();
         
         if (accounts.length > 0) {
+          console.log("✅ 지갑 연결됨:", accounts[0].address);
           setAccount(accounts[0].address);
           setProvider(web3Provider);
           setIsConnected(true);
+        } else {
+          console.log("⚠️ 연결된 지갑 없음");
         }
       } catch (error) {
+        console.error("❌ 지갑 연결 확인 오류:", error);
         setError("지갑 연결 확인 중 오류가 발생했습니다.");
-        console.error("연결 확인 중 오류 발생:", error);
       }
+    } else {
+      console.log("⚠️ 메타마스크가 설치되어 있지 않음");
+      setError("메타마스크가 설치되어 있지 않습니다.");
     }
   };
   
@@ -610,13 +621,24 @@ export function useBattleLogic() {
   // 배틀 생성 핸들러
   const handleCreateBattle = () => {
     try {
+      console.log("🎮 배틀 생성 시작");
+      console.log("📝 현재 배틀 데이터:", newBattle);
+      
       if (!newBattle.title || !newBattle.optionA || !newBattle.betAmount) {
+        console.log("❌ 필수 필드 누락");
         alert('Please fill in all required fields');
         return;
       }
       
       const filledQuizzes = newBattle.quizzes.filter(quiz => quiz.trim() !== '');
+      console.log("📊 퀴즈 상태:", {
+        total: newBattle.quizCount,
+        filled: filledQuizzes.length,
+        quizzes: filledQuizzes
+      });
+      
       if (filledQuizzes.length !== newBattle.quizCount) {
+        console.log("❌ 퀴즈 개수 불일치");
         alert(`Please fill in all ${newBattle.quizCount} quizzes`);
         return;
       }
@@ -637,8 +659,14 @@ export function useBattleLogic() {
         quizzesBAnswers: Array(newBattle.quizCount).fill('true')
       };
       
-      setWaitingBattles(prev => [newWaitingBattle, ...prev]);
+      console.log("✨ 새로운 배틀 생성:", newWaitingBattle);
       
+      setWaitingBattles(prev => {
+        const updated = [newWaitingBattle, ...prev];
+        console.log("📋 대기 중인 배틀 목록 업데이트:", updated);
+        return updated;
+      });
+
       setNewBattle({
         title: '',
         optionA: '',
@@ -650,11 +678,13 @@ export function useBattleLogic() {
         quizAnswers: ['true']
       });
       
+      console.log("✅ 배틀 생성 완료");
+      
       const popup = document.getElementById('newBattlePopup');
       if (popup) popup.classList.add('hidden');
     } catch (error) {
+      console.error("❌ 배틀 생성 오류:", error);
       setError("배틀 생성 중 오류가 발생했습니다.");
-      console.error("배틀 생성 오류:", error);
     }
   };
   

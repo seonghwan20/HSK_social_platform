@@ -52,7 +52,8 @@ export default function Home() {
     handleOpenChallenge,
     handleChallengerQuizChange,
     handleAcceptChallenge,
-    setShowSideBetOptions
+    setShowSideBetOptions,
+    setNewBattle
   } = useBattleLogic();
   
   // All wallet connection logic is now handled by useBattleLogic()
@@ -378,6 +379,7 @@ export default function Home() {
           </div>
           
           <div className="space-y-4">
+            {/* 제목 입력 */}
             <div>
               <label className="block text-sm text-gray-400 mb-1">Battle Title</label>
               <input 
@@ -390,9 +392,124 @@ export default function Home() {
               />
             </div>
             
-            {/* 나머지 폼 필드들... */}
+            {/* 첫 번째 옵션 입력 */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Option A</label>
+              <input 
+                type="text" 
+                name="optionA"
+                value={newBattle.optionA}
+                onChange={handleInputChange}
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                placeholder="Enter first option"
+              />
+            </div>
             
-            <div className="pt-2">
+            {/* 베팅 금액 입력 */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Bet Amount (KRW)</label>
+              <input 
+                type="text" 
+                name="betAmount"
+                value={newBattle.betAmount}
+                onChange={handleInputChange}
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                placeholder="Enter bet amount"
+              />
+            </div>
+            
+            {/* 카테고리 선택 */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Category</label>
+              <select
+                name="category"
+                value={newBattle.category}
+                onChange={handleInputChange}
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+              >
+                <option value="sports">Sports</option>
+                <option value="entertainment">Entertainment</option>
+                <option value="food">Food</option>
+                <option value="technology">Technology</option>
+                <option value="politics">Politics</option>
+                <option value="fashion">Fashion</option>
+              </select>
+            </div>
+            
+            {/* 사진 업로드 */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Option A Photo</label>
+              <div className="flex items-center gap-2">
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  onChange={(e) => handleFileUpload((photo) => {
+                    setNewBattle(prev => ({ ...prev, photoA: photo }));
+                  }, e)}
+                  className="hidden"
+                  id="photoA"
+                />
+                <label 
+                  htmlFor="photoA"
+                  className="flex-1 bg-gray-700 rounded px-3 py-2 text-white cursor-pointer text-center hover:bg-gray-600"
+                >
+                  {newBattle.photoA ? 'Change Photo' : 'Upload Photo'}
+                </label>
+                {newBattle.photoA && (
+                  <div className="w-20 h-20 relative">
+                    <Image
+                      src={newBattle.photoA}
+                      alt="Option A"
+                      fill
+                      className="object-cover rounded"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* 퀴즈 개수 선택 */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Number of Quizzes (1-5)</label>
+              <input 
+                type="number" 
+                name="quizCount"
+                value={newBattle.quizCount}
+                onChange={handleInputChange}
+                min="1"
+                max="5"
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+              />
+            </div>
+            
+            {/* 퀴즈 입력 */}
+            <div className="space-y-2">
+              <label className="block text-sm text-gray-400 mb-1">Quizzes</label>
+              {Array.from({ length: newBattle.quizCount }).map((_, index) => (
+                <div key={index} className="space-y-1">
+                  <input 
+                    type="text"
+                    value={newBattle.quizzes[index] || ''}
+                    onChange={(e) => handleQuizChange(index, e.target.value)}
+                    className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                    placeholder={`Quiz ${index + 1}`}
+                  />
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-400">Answer:</label>
+                    <select
+                      value={newBattle.quizAnswers[index] || 'true'}
+                      onChange={(e) => handleQuizAnswerChange(index, e.target.value)}
+                      className="bg-gray-700 rounded px-2 py-1 text-white"
+                    >
+                      <option value="true">True</option>
+                      <option value="false">False</option>
+                    </select>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="pt-4">
               <button 
                 onClick={handleCreateBattle}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium"
@@ -633,7 +750,7 @@ export default function Home() {
                     {committeeQuizzes[currentQuizIndex].player}
                   </div>
                   <span>
-                    This statement was made by participant {committeeQuizzes[currentQuizIndex].player === 'A' ? 'A' : 'B'} - {committeeQuizzes[currentQuizIndex].player === 'A' ? selectedBattleDetails?.optionA : selectedBattleDetails?.optionB}
+                    This statement was made by participant {committeeQuizzes[currentQuizIndex].player === 'A' ? selectedBattleDetails?.optionA : selectedBattleDetails?.optionB}
                   </span>
                 </div>
               </div>
@@ -647,7 +764,7 @@ export default function Home() {
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 16 16">
                     <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                    <path d="M10.97 4.97a.235.235 0 0 0-.02.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05z"/>
+                    <path d="M10.97 4.97a.235.235 0 0 0-.02.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"/>
                   </svg>
                   <span>True</span>
                 </button>
