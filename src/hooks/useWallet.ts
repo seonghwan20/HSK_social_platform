@@ -3,14 +3,14 @@ import { ethers } from 'ethers';
 
 export function useWallet() {
   const [account, setAccount] = useState('');
-  const [provider, setProvider] = useState(null);
+  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [balance, setBalance] = useState('');
   const [networkName, setNetworkName] = useState('');
   const [isCorrectNetwork, setIsCorrectNetwork] = useState(false);
   
   // Create a memoized handleAccountsChanged function that won't change on rerenders
-  const handleAccountsChanged = useCallback((accounts) => {
+  const handleAccountsChanged = useCallback((accounts: string[]) => {
     if (accounts.length > 0) {
       setAccount(accounts[0]);
       setIsConnected(true);
@@ -64,24 +64,24 @@ export function useWallet() {
     }
   }, [account, isConnected, provider]);
   
-  // Check if connected to Sepolia testnet
+  // Check if connected to HashKey Testnet
   const checkNetwork = async () => {
     if (window.ethereum && provider) {
       try {
         const network = await provider.getNetwork();
-        const chainId = network.chainId;
+        const chainId = Number(network.chainId);
         
-        // Sepolia chainId is 11155111
-        const isSepolia = chainId === 11155111;
-        setIsCorrectNetwork(isSepolia);
+        // HashKey Testnet chainId is 133
+        const isHashKey = chainId === 133;
+        setIsCorrectNetwork(isHashKey);
         
-        if (isSepolia) {
-          setNetworkName('Sepolia');
+        if (isHashKey) {
+          setNetworkName('HashKey Testnet');
         } else {
           setNetworkName(`Unknown (${chainId})`);
         }
         
-        return isSepolia;
+        return isHashKey;
       } catch (error) {
         console.error("Network check error:", error);
         setNetworkName('Unknown');
@@ -92,38 +92,38 @@ export function useWallet() {
     return false;
   };
   
-  // Switch to Sepolia testnet
-  const switchToSepoliaNetwork = async () => {
+  // Switch to HashKey Testnet
+  const switchToHashKeyNetwork = async () => {
     if (!window.ethereum) {
       alert("Please install MetaMask!");
       return false;
     }
     
     try {
-      // Sepolia chainId in hex
-      const SEPOLIA_CHAIN_ID = '0xaa36a7'; // 11155111 in hex
+      // HashKey Testnet chainId in hex
+      const HASHKEY_CHAIN_ID = '0x85'; // 133 in hex
       
       try {
-        // Try to switch to Sepolia
+        // Try to switch to HashKey Testnet
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: SEPOLIA_CHAIN_ID }]
+          params: [{ chainId: HASHKEY_CHAIN_ID }]
         });
-      } catch (switchError) {
+      } catch (switchError: any) {
         // This error code indicates that the chain has not been added to MetaMask
         if (switchError.code === 4902) {
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
             params: [{
-              chainId: SEPOLIA_CHAIN_ID,
-              chainName: 'Sepolia Test Network',
-              rpcUrls: ['https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161'],
+              chainId: HASHKEY_CHAIN_ID,
+              chainName: 'HashKey Testnet',
+              rpcUrls: ['https://hashkeychain-testnet.alt.technology'],
               nativeCurrency: {
-                name: 'Sepolia ETH',
-                symbol: 'ETH',
+                name: 'HSK',
+                symbol: 'HSK',
                 decimals: 18
               },
-              blockExplorerUrls: ['https://sepolia.etherscan.io']
+              blockExplorerUrls: ['https://hashkeychain-testnet-explorer.alt.technology']
             }]
           });
         } else {
@@ -139,7 +139,7 @@ export function useWallet() {
       return await checkNetwork();
     } catch (error) {
       console.error("Network switch error:", error);
-      alert("Failed to switch to Sepolia network. Please try manually in MetaMask.");
+      alert("Failed to switch to HashKey Testnet. Please try manually in MetaMask.");
       return false;
     }
   };
@@ -179,6 +179,9 @@ export function useWallet() {
   const connectWallet = async () => {
     if (window.ethereum) {
       try {
+        // Switch to HashKey Testnet first
+        await switchToHashKeyNetwork();
+        
         // Request wallet permissions
         await window.ethereum.request({
           method: 'wallet_requestPermissions',
@@ -232,7 +235,7 @@ export function useWallet() {
     isCorrectNetwork,
     connectWallet,
     disconnectWallet,
-    switchToSepoliaNetwork,
+    switchToHashKeyNetwork,
     checkNetwork
   };
 }

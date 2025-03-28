@@ -103,6 +103,9 @@ export function useBattleLogic() {
     quizAnswers: ['true'] // Default answers for quizzes (O=true, X=false)
   });
   
+  // 퀴즈 검증 스킵 플래그
+  const skipQuizValidation = true; // 개발 중에는 퀴즈 검증을 건너뛰도록 설정
+  
   // 챌린지 수락 관련 상태
   const [selectedChallenge, setSelectedChallenge] = useState<Battle | null>(null);
   const [challengeResponse, setChallengeResponse] = useState<string>('');
@@ -139,7 +142,17 @@ export function useBattleLogic() {
       if (typeof window !== 'undefined' && (window as any).ethereum) {
         // Setup event listeners for MetaMask
         (window as any).ethereum.on('accountsChanged', handleAccountChange);
-        (window as any).ethereum.on('chainChanged', () => window.location.reload());
+        (window as any).ethereum.on('chainChanged', async (chainId: string) => {
+          console.log("🔗 체인 변경 감지:", chainId);
+          // HashKey Testnet이 아닌 경우 전환 시도
+          if (chainId !== '0x85') {
+            try {
+              await switchToHashKeyNetwork();
+            } catch (error) {
+              console.error("네트워크 전환 실패:", error);
+            }
+          }
+        });
         
         // Clean up event listeners when component unmounts
         return () => {
@@ -196,6 +209,9 @@ export function useBattleLogic() {
   const connectWallet = async () => {
     if (typeof window !== 'undefined' && typeof (window as any).ethereum !== 'undefined') {
       try {
+        // HashKey Testnet으로 전환
+        await switchToHashKeyNetwork();
+        
         // wallet_requestPermissions를 사용하여 이전 연결 상태를 무시하고 
         // 항상 새로운 연결 확인 창이 표시되도록 함
         await (window as any).ethereum.request({
@@ -219,9 +235,6 @@ export function useBattleLogic() {
         setIsConnected(true);
         setError(null);
         
-        // No need to add duplicate event listeners here
-        // They are already set up in the useEffect
-        
       } catch (error) {
         setError("지갑 연결에 실패했습니다.");
         console.error("지갑 연결 오류:", error);
@@ -229,6 +242,62 @@ export function useBattleLogic() {
     } else {
       setError("메타마스크가 설치되어 있지 않습니다.");
       alert("메타마스크를 설치해주세요!");
+    }
+  };
+  
+  // HashKey Testnet으로 전환하는 함수
+  const switchToHashKeyNetwork = async () => {
+    try {
+      console.log("🔄 HashKey Testnet으로 전환 시도 중...");
+      
+      // 현재 체인 ID 확인
+      const currentChainId = await (window as any).ethereum.request({ method: 'eth_chainId' });
+      
+      // 이미 HashKey Testnet에 있는 경우
+      if (currentChainId === '0x85') {
+        console.log("✅ 이미 HashKey Testnet에 연결됨");
+        return;
+      }
+      
+      // HashKey Testnet 파라미터
+      const hashKeyNetwork = {
+        chainId: '0x85', // 133 in decimal
+        chainName: 'HashKey Testnet',
+        nativeCurrency: {
+          name: 'HSK',
+          symbol: 'HSK',
+          decimals: 18
+        },
+        rpcUrls: ['https://hashkeychain-testnet.alt.technology'],
+        blockExplorerUrls: ['https://hashkeychain-testnet-explorer.alt.technology']
+      };
+
+      try {
+        // 먼저 네트워크 전환 시도
+        await (window as any).ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: '0x85' }]
+        });
+      } catch (switchError: any) {
+        // 네트워크가 추가되어 있지 않은 경우
+        if (switchError.code === 4902) {
+          // 네트워크 추가 요청
+          await (window as any).ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [hashKeyNetwork],
+          });
+        } else {
+          throw switchError;
+        }
+      }
+      
+      console.log("✅ HashKey Testnet으로 전환 완료");
+    } catch (error: any) {
+      if (error.code === 4001) {
+        console.log("⚠️ 네트워크 전환 거부됨");
+        throw new Error("네트워크 전환이 거부되었습니다.");
+      }
+      throw error;
     }
   };
   
@@ -713,16 +782,7 @@ export function useBattleLogic() {
         const { BattleFactoryService } = await import('../services/contracts');
         const battleFactoryService = new BattleFactoryService(provider);
         
-        // Check if we're connected to Sepolia
-        const networkCheck = await battleFactoryService.checkNetwork();
-        if (!networkCheck.success || !networkCheck.isSepoliaNetwork) {
-          const switchResult = await battleFactoryService.switchToSepoliaNetwork();
-          if (!switchResult.success) {
-            alert("Please switch to Sepolia Network to deploy battle contracts");
-            return null;
-          }
-        }
-        
+  
         // Deploy the battle contract
         const result = await battleFactoryService.deployBattleContract(
           battleId,

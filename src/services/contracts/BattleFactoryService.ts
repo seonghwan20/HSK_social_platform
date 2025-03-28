@@ -1,21 +1,29 @@
 import { ethers } from 'ethers';
-import { BattleFactory, BattleFactory__factory } from '../../../contracts/typechain-types';
-import addresses from '../../../contracts/addresses.json';
 
-// Sepolia network information
-const SEPOLIA_CHAIN_ID = '0xaa36a7';  // 11155111 in hex
-const SEPOLIA_RPC_URL = 'https://eth-sepolia.public.blastapi.io';
-const SEPOLIA_CHAIN_NAME = 'Sepolia Test Network';
-const SEPOLIA_CURRENCY_SYMBOL = 'ETH';
-const SEPOLIA_EXPLORER_URL = 'https://sepolia.etherscan.io';
+// HashKey Testnet network information
+const HASHKEY_CHAIN_ID = '0x85';  // 133 in hex
+const HASHKEY_RPC_URL = 'https://hashkeychain-testnet.alt.technology';
+const HASHKEY_CHAIN_NAME = 'HashKey Testnet';
+const HASHKEY_CURRENCY_SYMBOL = 'HSK';
+const HASHKEY_EXPLORER_URL = 'https://hashkeychain-testnet-explorer.alt.technology';
 
 // Contract address from addresses.json
-// This will be updated when the contract is deployed to a real network
-const BATTLE_FACTORY_ADDRESS = addresses.battleFactory;
+const BATTLE_FACTORY_ADDRESS = process.env.NEXT_PUBLIC_BATTLE_FACTORY_ADDRESS || '';
+
+// Contract ABI
+const BATTLE_FACTORY_ABI = [
+  "function createBattle(uint256 battleId, address player1, uint256 minimumCommittee, uint256 betAmount) external payable returns (address)",
+  "function acceptBattle(uint256 battleId, address player2) external returns (address)",
+  "function getBattleContracts(uint256 battleId) external view returns (address, address)",
+  "function isBattleAccepted(uint256 battleId) external view returns (bool)",
+  "function getAllBattleIds() external view returns (uint256[] memory)",
+  "event BattleCreated(uint256 indexed battleId, address indexed battleContract)",
+  "event SideBettingCreated(uint256 indexed battleId, address indexed sideBettingContract)"
+];
 
 export class BattleFactoryService {
   private provider: ethers.Provider | null = null;
-  private factoryContract: BattleFactory | null = null;
+  private factoryContract: ethers.Contract | null = null;
   private isInitialized: boolean = false;
   
   constructor(provider: ethers.Provider | null) {
@@ -31,8 +39,9 @@ export class BattleFactoryService {
     
     if (provider) {
       try {
-        this.factoryContract = BattleFactory__factory.connect(
+        this.factoryContract = new ethers.Contract(
           BATTLE_FACTORY_ADDRESS,
+          BATTLE_FACTORY_ABI,
           provider
         );
         
@@ -48,9 +57,9 @@ export class BattleFactoryService {
   }
   
   /**
-   * Check if the wallet is connected to Sepolia network
+   * Check if the wallet is connected to HashKey Testnet
    */
-  async checkNetwork(): Promise<{ success: boolean; isSepoliaNetwork?: boolean; message?: string }> {
+  async checkNetwork(): Promise<{ success: boolean; isHashKeyNetwork?: boolean; message?: string }> {
     try {
       if (!window.ethereum) {
         return {
@@ -64,7 +73,7 @@ export class BattleFactoryService {
 
       return {
         success: true,
-        isSepoliaNetwork: chainId.toString() === '11155111'
+        isHashKeyNetwork: chainId.toString() === '133'
       };
     } catch (error) {
       console.error('Network check error:', error);
@@ -76,9 +85,9 @@ export class BattleFactoryService {
   }
 
   /**
-   * Switch to Sepolia network
+   * Switch to HashKey Testnet
    */
-  async switchToSepoliaNetwork(): Promise<{ success: boolean; message?: string }> {
+  async switchToHashKeyNetwork(): Promise<{ success: boolean; message?: string }> {
     try {
       if (!window.ethereum) {
         return {
@@ -88,10 +97,10 @@ export class BattleFactoryService {
       }
 
       try {
-        // Request network switch to Sepolia
+        // Request network switch to HashKey Testnet
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: SEPOLIA_CHAIN_ID }],
+          params: [{ chainId: HASHKEY_CHAIN_ID }],
         });
       } catch (switchError: any) {
         // If network is not in MetaMask, add it
@@ -100,15 +109,15 @@ export class BattleFactoryService {
             method: 'wallet_addEthereumChain',
             params: [
               {
-                chainId: SEPOLIA_CHAIN_ID,
-                chainName: SEPOLIA_CHAIN_NAME,
-                rpcUrls: [SEPOLIA_RPC_URL],
+                chainId: HASHKEY_CHAIN_ID,
+                chainName: HASHKEY_CHAIN_NAME,
+                rpcUrls: [HASHKEY_RPC_URL],
                 nativeCurrency: {
-                  name: 'Sepolia ETH',
-                  symbol: SEPOLIA_CURRENCY_SYMBOL,
+                  name: 'HashKey HSK',
+                  symbol: HASHKEY_CURRENCY_SYMBOL,
                   decimals: 18
                 },
-                blockExplorerUrls: [SEPOLIA_EXPLORER_URL]
+                blockExplorerUrls: [HASHKEY_EXPLORER_URL]
               },
             ],
           });
@@ -137,7 +146,7 @@ export class BattleFactoryService {
     connected?: boolean;
     signer?: ethers.Signer;
     address?: string;
-    isSepoliaNetwork?: boolean;
+    isHashKeyNetwork?: boolean;
     message?: string;
   }> {
     try {
@@ -179,7 +188,7 @@ export class BattleFactoryService {
           connected: true,
           signer,
           address,
-          isSepoliaNetwork: networkCheck.success && networkCheck.isSepoliaNetwork
+          isHashKeyNetwork: networkCheck.success && networkCheck.isHashKeyNetwork
         };
       } catch (error) {
         throw error;
@@ -222,13 +231,13 @@ export class BattleFactoryService {
       
       // Check network
       const networkCheck = await this.checkNetwork();
-      if (!networkCheck.success || !networkCheck.isSepoliaNetwork) {
+      if (!networkCheck.success || !networkCheck.isHashKeyNetwork) {
         // Try to switch network
-        const switchResult = await this.switchToSepoliaNetwork();
+        const switchResult = await this.switchToHashKeyNetwork();
         if (!switchResult.success) {
           return {
             success: false,
-            message: "Please switch to Sepolia Test Network to create a battle."
+            message: "Please switch to HashKey Testnet to create a battle."
           };
         }
       }
@@ -353,13 +362,13 @@ export class BattleFactoryService {
       
       // Check network
       const networkCheck = await this.checkNetwork();
-      if (!networkCheck.success || !networkCheck.isSepoliaNetwork) {
+      if (!networkCheck.success || !networkCheck.isHashKeyNetwork) {
         // Try to switch network
-        const switchResult = await this.switchToSepoliaNetwork();
+        const switchResult = await this.switchToHashKeyNetwork();
         if (!switchResult.success) {
           return {
             success: false,
-            message: "Please switch to Sepolia Test Network to accept this battle."
+            message: "Please switch to HashKey Testnet to accept this battle."
           };
         }
       }
