@@ -53,7 +53,9 @@ export default function Home() {
     handleChallengerQuizChange,
     handleAcceptChallenge,
     setShowSideBetOptions,
-    setNewBattle
+    setNewBattle,
+    setChallengeResponse,
+    setResponsePhoto
   } = useBattleLogic();
   
   // All wallet connection logic is now handled by useBattleLogic()
