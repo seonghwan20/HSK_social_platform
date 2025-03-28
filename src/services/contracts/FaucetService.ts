@@ -1,53 +1,348 @@
 import { ethers } from 'ethers';
-
-// Faucet 컨트랙트 ABI
-const FAUCET_ABI = [
-  // 컨트랙트 ABI 내용
-];
+import { Faucet, Faucet__factory } from '../../../contracts/typechain-types';
 
 export class FaucetService {
-  constructor(provider) {
-    this.provider = provider;
-    this.signer = provider ? provider.getSigner() : null;
-  }
+  private provider: ethers.Provider | null;
+  private signer: ethers.Signer | null;
   
-  // 컨트랙트 배포
-  async deployFaucet(player1, player2, betAmount, minimumCommittee) {
-    try {
-      const factory = new ethers.ContractFactory(
-        FAUCET_ABI, 
-        "0x...", // 바이트코드
-        this.signer
-      );
-      
-      const contract = await factory.deploy(
-        player1,
-        player2,
-        ethers.utils.parseEther(betAmount),
-        minimumCommittee
-      );
-      
-      await contract.deployed();
-      return contract;
-    } catch (error) {
-      console.error("컨트랙트 배포 오류:", error);
-      throw error;
+  constructor(provider: ethers.Provider | null) {
+    this.provider = provider;
+    this.signer = null;
+    
+    if (provider && typeof window !== 'undefined' && window.ethereum) {
+      this.initializeSigner();
     }
   }
   
-  // 기존 컨트랙트 연결
-  getFaucetContract(address) {
-    return new ethers.Contract(address, FAUCET_ABI, this.signer);
+  private async initializeSigner() {
+    try {
+      if (this.provider) {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        this.signer = await provider.getSigner();
+      }
+    } catch (error) {
+      console.error("Failed to initialize signer:", error);
+    }
   }
   
-  // 베팅 자금 추가
-  async fundGame(contractAddress) {
-    const contract = this.getFaucetContract(contractAddress);
-    // FundGame 함수 호출
+  /**
+   * Connect to an existing Faucet contract
+   */
+  async connectToContract(contractAddress: string): Promise<Faucet | null> {
+    try {
+      if (!this.provider) {
+        throw new Error("Provider not set");
+      }
+      
+      if (!this.signer) {
+        await this.initializeSigner();
+      }
+      
+      if (!this.signer) {
+        throw new Error("Signer not available");
+      }
+      
+      return Faucet__factory.connect(contractAddress, this.signer);
+    } catch (error) {
+      console.error("Failed to connect to Faucet contract:", error);
+      return null;
+    }
   }
   
-  // 이벤트 리스닝
-  listenToEvents(contractAddress, eventCallback) {
-    // 이벤트 리스닝 로직
+  /**
+   * Get game status from Faucet contract
+   */
+  async getGameStatus(contractAddress: string): Promise<{
+    success: boolean;
+    isActive?: boolean;
+    isValid?: boolean;
+    inVotingPhase?: boolean;
+    deadline?: number;
+    currentCommitteeCount?: number;
+    requiredCommitteeCount?: number;
+    timeRemaining?: number;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const status = await contract.getGameStatus();
+      
+      return {
+        success: true,
+        isActive: status[0],
+        isValid: status[1],
+        inVotingPhase: status[2],
+        deadline: Number(status[3]),
+        currentCommitteeCount: Number(status[4]),
+        requiredCommitteeCount: Number(status[5]),
+        timeRemaining: Number(status[6])
+      };
+    } catch (error) {
+      console.error("Failed to get game status:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  
+  /**
+   * Get players from Faucet contract
+   */
+  async getPlayers(contractAddress: string): Promise<{
+    success: boolean;
+    player1?: string;
+    player2?: string;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const players = await contract.getPlayers();
+      
+      return {
+        success: true,
+        player1: players[0],
+        player2: players[1]
+      };
+    } catch (error) {
+      console.error("Failed to get players:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  
+  /**
+   * Fund a game with bet amount
+   */
+  async fundGame(contractAddress: string, betAmount: string): Promise<{
+    success: boolean;
+    txHash?: string;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const tx = await contract.FundGame({
+        value: ethers.parseEther(betAmount)
+      });
+      
+      console.log("Fund game transaction sent:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Fund game transaction confirmed:", receipt);
+      
+      return {
+        success: true,
+        txHash: tx.hash
+      };
+    } catch (error) {
+      console.error("Failed to fund game:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  
+  /**
+   * Start a game
+   */
+  async startGame(contractAddress: string, durationInDays: number): Promise<{
+    success: boolean;
+    txHash?: string;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const tx = await contract.startGame(durationInDays);
+      
+      console.log("Start game transaction sent:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Start game transaction confirmed:", receipt);
+      
+      return {
+        success: true,
+        txHash: tx.hash
+      };
+    } catch (error) {
+      console.error("Failed to start game:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  
+  /**
+   * Add committee member
+   */
+  async addCommittee(contractAddress: string, memberAddress: string): Promise<{
+    success: boolean;
+    txHash?: string;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const tx = await contract.addCommittee(memberAddress);
+      
+      console.log("Add committee transaction sent:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Add committee transaction confirmed:", receipt);
+      
+      return {
+        success: true,
+        txHash: tx.hash
+      };
+    } catch (error) {
+      console.error("Failed to add committee member:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  
+  /**
+   * Check game status
+   */
+  async checkGameStatus(contractAddress: string): Promise<{
+    success: boolean;
+    status?: string;
+    txHash?: string;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const tx = await contract.checkGameStatus();
+      
+      console.log("Check game status transaction sent:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Check game status transaction confirmed:", receipt);
+      
+      // We can't get the return value directly from a transaction
+      // You would need to handle events or call a view function afterward
+      
+      return {
+        success: true,
+        txHash: tx.hash
+      };
+    } catch (error) {
+      console.error("Failed to check game status:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  
+  /**
+   * Cancel a game
+   */
+  async cancelGame(contractAddress: string): Promise<{
+    success: boolean;
+    txHash?: string;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const tx = await contract.cancelGame();
+      
+      console.log("Cancel game transaction sent:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Cancel game transaction confirmed:", receipt);
+      
+      return {
+        success: true,
+        txHash: tx.hash
+      };
+    } catch (error) {
+      console.error("Failed to cancel game:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  
+  /**
+   * Withdraw funds
+   */
+  async withdraw(contractAddress: string, amount: string): Promise<{
+    success: boolean;
+    txHash?: string;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const tx = await contract.withdraw(ethers.parseEther(amount));
+      
+      console.log("Withdraw transaction sent:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Withdraw transaction confirmed:", receipt);
+      
+      return {
+        success: true,
+        txHash: tx.hash
+      };
+    } catch (error) {
+      console.error("Failed to withdraw funds:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+}
+
+// Add window.ethereum type declaration
+declare global {
+  interface Window {
+    ethereum: any;
   }
 }

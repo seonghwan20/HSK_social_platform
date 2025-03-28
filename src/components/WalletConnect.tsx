@@ -5,6 +5,8 @@ export default function WalletConnect() {
   const { account, isConnected, connectWallet, disconnectWallet } = useBattleLogic();
   const [displayBalance, setDisplayBalance] = useState("0.0000");
   const [showDisconnectWarning, setShowDisconnectWarning] = useState(false);
+  const [networkName, setNetworkName] = useState("");
+  const [isSepoliaNetwork, setIsSepoliaNetwork] = useState(false);
   
   // Handle disconnect click to show warning
   const handleDisconnectClick = () => {
@@ -17,12 +19,53 @@ export default function WalletConnect() {
     setShowDisconnectWarning(false);
   };
   
-  // Get updated balance from provider
+  // Switch to Sepolia network
+  const switchToSepoliaNetwork = async () => {
+    if (typeof window !== 'undefined' && (window as any).ethereum) {
+      try {
+        // Sepolia testnet chainId in hex
+        const SEPOLIA_CHAIN_ID = '0xaa36a7'; // 11155111 in hex
+        
+        try {
+          // Try to switch to Sepolia
+          await (window as any).ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: SEPOLIA_CHAIN_ID }]
+          });
+        } catch (switchError: any) {
+          // Network not added to MetaMask
+          if (switchError.code === 4902) {
+            await (window as any).ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: SEPOLIA_CHAIN_ID,
+                chainName: 'Sepolia Test Network',
+                rpcUrls: ['https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161'],
+                nativeCurrency: {
+                  name: 'Sepolia ETH',
+                  symbol: 'ETH',
+                  decimals: 18
+                },
+                blockExplorerUrls: ['https://sepolia.etherscan.io']
+              }]
+            });
+          } else {
+            throw switchError;
+          }
+        }
+      } catch (error) {
+        console.error("Error switching to Sepolia network:", error);
+        alert("Failed to switch to Sepolia network. Please try manually in MetaMask.");
+      }
+    }
+  };
+  
+  // Get updated balance and network info from provider
   useEffect(() => {
-    const getBalance = async () => {
+    const getWalletInfo = async () => {
       if (typeof window !== 'undefined' && (window as any).ethereum && isConnected && account) {
         try {
-          // This is a simple way to get balance - in a real app, you'd use your wallet service
+          // Get balance
           const balance = await (window as any).ethereum.request({
             method: 'eth_getBalance',
             params: [account, 'latest']
@@ -31,14 +74,35 @@ export default function WalletConnect() {
           // Convert from wei to ETH
           const ethBalance = parseInt(balance, 16) / 1e18;
           setDisplayBalance(ethBalance.toFixed(4));
+          
+          // Get network info
+          const chainId = await (window as any).ethereum.request({
+            method: 'eth_chainId'
+          });
+          
+          // Check if on Sepolia (chainId = 0xaa36a7 or 11155111)
+          const isSepolia = chainId === '0xaa36a7';
+          setIsSepoliaNetwork(isSepolia);
+          
+          if (isSepolia) {
+            setNetworkName('Sepolia');
+          } else if (chainId === '0x1') {
+            setNetworkName('Ethereum');
+          } else if (chainId === '0x5') {
+            setNetworkName('Goerli');
+          } else {
+            setNetworkName(`Chain ID: ${chainId}`);
+          }
         } catch (error) {
-          console.error("Error getting balance:", error);
+          console.error("Error getting wallet info:", error);
           setDisplayBalance("0.0000");
+          setNetworkName("Unknown");
+          setIsSepoliaNetwork(false);
         }
       }
     };
     
-    getBalance();
+    getWalletInfo();
   }, [account, isConnected]);
   
   return (
@@ -52,6 +116,22 @@ export default function WalletConnect() {
           <div className="text-sm">
             <span className="text-gray-400">Balance: </span>
             <span className="font-medium">{displayBalance} ETH</span>
+          </div>
+          <div className="text-sm">
+            <span className="text-gray-400">Network: </span>
+            <span className={`font-medium ${isSepoliaNetwork ? 'text-green-500' : 'text-red-400'}`}>
+              {networkName}
+            </span>
+            
+            {/* Show switch button if not on Sepolia */}
+            {!isSepoliaNetwork && (
+              <button 
+                onClick={switchToSepoliaNetwork}
+                className="ml-2 text-xs bg-yellow-600 hover:bg-yellow-700 text-white px-2 py-1 rounded"
+              >
+                Switch
+              </button>
+            )}
           </div>
           <button 
             onClick={handleDisconnectClick}
