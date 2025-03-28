@@ -1,6 +1,16 @@
 import { ethers } from 'ethers';
 import { Faucet, Faucet__factory } from '../../../contracts/typechain-types';
 
+const BATTLE_FACTORY_ABI = [
+  "function createBattle(uint256 battleId, address player1, uint256 minimumCommittee, uint256 betAmount) external payable returns (address)",
+  "function acceptBattle(uint256 battleId, address player2) external returns (address)",
+  "function getBattleContracts(uint256 battleId) external view returns (address, address)",
+  "function isBattleAccepted(uint256 battleId) external view returns (bool)",
+  "function getAllBattleIds() external view returns (uint256[] memory)",
+  "event BattleCreated(uint256 indexed battleId, address indexed battleContract)",
+  "event SideBettingCreated(uint256 indexed battleId, address indexed sideBettingContract)"
+];
+
 export class FaucetService {
   private provider: ethers.Provider | null;
   private signer: ethers.Signer | null;
@@ -12,7 +22,7 @@ export class FaucetService {
     if (provider && typeof window !== 'undefined' && window.ethereum) {
       this.initializeSigner();
     }
-  }
+  }8
   
   private async initializeSigner() {
     try {
