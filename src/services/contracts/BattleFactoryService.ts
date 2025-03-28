@@ -12,14 +12,33 @@ const BATTLE_FACTORY_ADDRESS = process.env.NEXT_PUBLIC_BATTLE_FACTORY_ADDRESS ||
 
 // Contract ABI
 const BATTLE_FACTORY_ABI = [
-  "function createBattle(uint256 battleId, address player1, uint256 minimumCommittee, uint256 betAmount) external payable returns (address)",
-  "function acceptBattle(uint256 battleId, address player2) external returns (address)",
-  "function getBattleContracts(uint256 battleId) external view returns (address, address)",
+  "function createBattle(address player1, uint256 minimumCommittee, uint256 betAmount, string memory player1Bet, uint8 durationInDays, string memory title) external returns (address)",
+  "function acceptBattle(uint256 battleId, string memory player2Bet) external returns (address)",
+  "function getBattleContracts(uint256 battleId) external view returns (address battleContract, address sideBettingContract)",
   "function isBattleAccepted(uint256 battleId) external view returns (bool)",
   "function getAllBattleIds() external view returns (uint256[] memory)",
-  "event BattleCreated(uint256 indexed battleId, address indexed battleContract)",
-  "event SideBettingCreated(uint256 indexed battleId, address indexed sideBettingContract)"
+  "function getAllBattleMetas() external view returns (tuple(uint256 battleId, address battleContract, address player1, string player1Bet, address player2, string player2Bet, uint256 betAmount, uint256 minimumCommittee, uint8 durationInDays, string title, bool isAccepted, address sideBettingContract)[] memory)",
+  "function getWaitingBattles() external view returns (tuple(uint256 battleId, address battleContract, address player1, string player1Bet, address player2, string player2Bet, uint256 betAmount, uint256 minimumCommittee, uint8 durationInDays, string title, bool isAccepted, address sideBettingContract)[] memory)",
+  "function getActiveBattles() external view returns (tuple(uint256 battleId, address battleContract, address player1, string player1Bet, address player2, string player2Bet, uint256 betAmount, uint256 minimumCommittee, uint8 durationInDays, string title, bool isAccepted, address sideBettingContract)[] memory)",
+  "function getBattleMetaById(uint256 battleId) external view returns (tuple(uint256 battleId, address battleContract, address player1, string player1Bet, address player2, string player2Bet, uint256 betAmount, uint256 minimumCommittee, uint8 durationInDays, string title, bool isAccepted, address sideBettingContract) memory)",
+  "event BattleCreated(uint256 indexed battleId, address battleContract, address player1, uint256 betAmount)",
+  "event SideBettingCreated(uint256 indexed battleId, address sideBettingContract, address battleContract)"
 ];
+
+export interface BattleMeta {
+  battleId: number;
+  battleContract: string;
+  player1: string;
+  player1Bet: string;
+  player2: string;
+  player2Bet: string;
+  betAmount: bigint;
+  minimumCommittee: number;
+  durationInDays: number;
+  title: string;
+  isAccepted: boolean;
+  sideBettingContract: string;
+}
 
 export class BattleFactoryService {
   private provider: ethers.Provider | null = null;
@@ -39,10 +58,17 @@ export class BattleFactoryService {
     
     if (provider) {
       try {
+        // ENS 비활성화된 provider 생성
+        const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
+          chainId: 133, // HashKey Testnet chainId
+          name: 'HashKey Testnet',
+          ensAddress: undefined // ENS 비활성화
+        });
+
         this.factoryContract = new ethers.Contract(
           BATTLE_FACTORY_ADDRESS,
           BATTLE_FACTORY_ABI,
-          provider
+          web3Provider
         );
         
         this.isInitialized = true;
@@ -211,7 +237,13 @@ export class BattleFactoryService {
       throw new Error("MetaMask is not installed");
     }
     
-    const provider = new ethers.BrowserProvider(window.ethereum);
+    // ENS 비활성화된 provider 생성
+    const provider = new ethers.BrowserProvider(window.ethereum, {
+      chainId: 133, // HashKey Testnet chainId
+      name: 'HashKey Testnet',
+      ensAddress: undefined // ENS 비활성화
+    });
+    
     return await provider.getSigner();
   }
   
@@ -219,20 +251,19 @@ export class BattleFactoryService {
    * Creates a new battle contract
    */
   async deployBattleContract(
-    battleId: number,
+    minimumCommittee: number,
     betAmount: string,
-    minimumCommittee: number = 3
+    player1Bet: string,
+    durationInDays: number,
+    title: string
   ): Promise<{ success: boolean; contractAddress?: string; message?: string; txHash?: string }> {
     try {
-      // Check if initialized
       if (!this.isInitialized || !this.factoryContract) {
         throw new Error("Contract not initialized. Please connect wallet first.");
       }
       
-      // Check network
       const networkCheck = await this.checkNetwork();
       if (!networkCheck.success || !networkCheck.isHashKeyNetwork) {
-        // Try to switch network
         const switchResult = await this.switchToHashKeyNetwork();
         if (!switchResult.success) {
           return {
@@ -242,44 +273,41 @@ export class BattleFactoryService {
         }
       }
       
-      // Get signer
       const signer = await this.getSigner();
       const signerAddress = await signer.getAddress();
       
-      console.log(`Creating battle with ID ${battleId}, player1 ${signerAddress}, minimum committee ${minimumCommittee}, bet amount ${betAmount}`);
+      console.log(`Creating battle with player1 ${signerAddress}, minimum committee ${minimumCommittee}, bet amount ${betAmount}`);
       
-      // Convert bet amount to wei
       const betAmountWei = ethers.parseEther(betAmount);
       
-      // Connect contract with signer for writing operations
       const writableContract = this.factoryContract.connect(signer);
       
-      // Estimate gas to avoid unexpected errors
       try {
         const estimatedGas = await writableContract.createBattle.estimateGas(
-          battleId,
           signerAddress,
           minimumCommittee,
-          betAmountWei
+          betAmountWei,
+          player1Bet,
+          durationInDays,
+          title
         );
         
         console.log("Estimated gas:", estimatedGas.toString());
         
-        // Add 20% buffer for gas limit
         const gasLimit = Math.floor(Number(estimatedGas) * 1.2);
         
-        // Deploy the battle contract via the factory with gas limit
         const tx = await writableContract.createBattle(
-          battleId,
           signerAddress,
           minimumCommittee,
           betAmountWei,
+          player1Bet,
+          durationInDays,
+          title,
           { gasLimit }
         );
         
         console.log("Transaction sent:", tx.hash);
         
-        // Wait for transaction to be mined
         const receipt = await tx.wait();
         console.log("Transaction confirmed:", receipt);
         
@@ -287,10 +315,8 @@ export class BattleFactoryService {
           throw new Error("Transaction failed: No receipt received");
         }
         
-        // Parse events to get the deployed contract address
         let battleAddress = "";
         
-        // Find BattleCreated event and extract battle contract address
         if (receipt.logs) {
           for (const log of receipt.logs) {
             try {
@@ -304,14 +330,12 @@ export class BattleFactoryService {
                 break;
               }
             } catch (e) {
-              // Skip logs that can't be parsed as BattleCreated events
               continue;
             }
           }
         }
         
         if (!battleAddress) {
-          // Fallback - if we can't parse the event, use a random address for testing
           battleAddress = ethers.Wallet.createRandom().address;
           console.warn("Could not extract contract address from event, using random address for testing:", battleAddress);
         }
@@ -324,10 +348,8 @@ export class BattleFactoryService {
       } catch (estimateError) {
         console.error("Gas estimation failed:", estimateError);
         
-        // Fallback to simulation for testing/development
         console.log("Using simulation mode for development...");
         
-        // Simulate transaction
         const mockTxHash = "0x" + Math.random().toString(16).substr(2, 40);
         const battleAddress = ethers.Wallet.createRandom().address;
         
@@ -352,18 +374,15 @@ export class BattleFactoryService {
    */
   async acceptBattle(
     battleId: number,
-    player2: string
+    player2Bet: string
   ): Promise<{ success: boolean; contractAddress?: string; message?: string; txHash?: string }> {
     try {
-      // Check if initialized
       if (!this.isInitialized || !this.factoryContract) {
         throw new Error("Contract not initialized. Please connect wallet first.");
       }
       
-      // Check network
       const networkCheck = await this.checkNetwork();
       if (!networkCheck.success || !networkCheck.isHashKeyNetwork) {
-        // Try to switch network
         const switchResult = await this.switchToHashKeyNetwork();
         if (!switchResult.success) {
           return {
@@ -373,32 +392,25 @@ export class BattleFactoryService {
         }
       }
       
-      // Get signer
       const signer = await this.getSigner();
-      
-      // Create writable contract instance
       const writableContract = this.factoryContract.connect(signer);
       
       try {
-        // Estimate gas
         const estimatedGas = await writableContract.acceptBattle.estimateGas(
           battleId,
-          player2
+          player2Bet
         );
         
-        // Add 20% buffer for gas limit
         const gasLimit = Math.floor(Number(estimatedGas) * 1.2);
         
-        // Deploy the SideBetting contract via the factory
         const tx = await writableContract.acceptBattle(
           battleId,
-          player2,
+          player2Bet,
           { gasLimit }
         );
         
         console.log("Transaction sent:", tx.hash);
         
-        // Wait for transaction to be mined
         const receipt = await tx.wait();
         console.log("Transaction confirmed:", receipt);
         
@@ -406,10 +418,8 @@ export class BattleFactoryService {
           throw new Error("Transaction failed: No receipt received");
         }
         
-        // Parse events to get the deployed contract address
         let sideBettingAddress = "";
         
-        // Find SideBettingCreated event and extract sideBetting contract address
         if (receipt.logs) {
           for (const log of receipt.logs) {
             try {
@@ -423,14 +433,12 @@ export class BattleFactoryService {
                 break;
               }
             } catch (e) {
-              // Skip logs that can't be parsed as SideBettingCreated events
               continue;
             }
           }
         }
         
         if (!sideBettingAddress) {
-          // Fallback address for testing
           sideBettingAddress = ethers.Wallet.createRandom().address;
           console.warn("Could not extract contract address from event, using random address for testing:", sideBettingAddress);
         }
@@ -443,10 +451,8 @@ export class BattleFactoryService {
       } catch (estimateError) {
         console.error("Gas estimation failed:", estimateError);
         
-        // Fallback to simulation for testing/development
         console.log("Using simulation mode for development...");
         
-        // Simulate transaction
         const mockTxHash = "0x" + Math.random().toString(16).substr(2, 40);
         const sideBettingAddress = ethers.Wallet.createRandom().address;
         
@@ -554,6 +560,142 @@ export class BattleFactoryService {
       return {
         success: false,
         message: error instanceof Error ? error.message : "Unknown error occurred while getting battle IDs"
+      };
+    }
+  }
+
+  async getAllBattleMetas(): Promise<{ success: boolean; battleMetas?: BattleMeta[]; message?: string }> {
+    try {
+      if (!this.isInitialized || !this.factoryContract) {
+        throw new Error("Contract not initialized. Please connect wallet first.");
+      }
+      
+      const battleMetas = await this.factoryContract.getAllBattleMetas();
+      
+      return {
+        success: true,
+        battleMetas: battleMetas.map((meta: any) => ({
+          battleId: Number(meta.battleId),
+          battleContract: meta.battleContract,
+          player1: meta.player1,
+          player1Bet: meta.player1Bet,
+          player2: meta.player2,
+          player2Bet: meta.player2Bet,
+          betAmount: meta.betAmount,
+          minimumCommittee: Number(meta.minimumCommittee),
+          durationInDays: Number(meta.durationInDays),
+          title: meta.title,
+          isAccepted: meta.isAccepted,
+          sideBettingContract: meta.sideBettingContract
+        }))
+      };
+    } catch (error) {
+      console.error("Failed to get all battle metas:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error occurred while getting battle metas"
+      };
+    }
+  }
+
+  async getWaitingBattles(): Promise<{ success: boolean; battleMetas?: BattleMeta[]; message?: string }> {
+    try {
+      if (!this.isInitialized || !this.factoryContract) {
+        throw new Error("Contract not initialized. Please connect wallet first.");
+      }
+      
+      const battleMetas = await this.factoryContract.getWaitingBattles();
+      
+      return {
+        success: true,
+        battleMetas: battleMetas.map((meta: any) => ({
+          battleId: Number(meta.battleId),
+          battleContract: meta.battleContract,
+          player1: meta.player1,
+          player1Bet: meta.player1Bet,
+          player2: meta.player2,
+          player2Bet: meta.player2Bet,
+          betAmount: meta.betAmount,
+          minimumCommittee: Number(meta.minimumCommittee),
+          durationInDays: Number(meta.durationInDays),
+          title: meta.title,
+          isAccepted: meta.isAccepted,
+          sideBettingContract: meta.sideBettingContract
+        }))
+      };
+    } catch (error) {
+      console.error("Failed to get waiting battles:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error occurred while getting waiting battles"
+      };
+    }
+  }
+
+  async getActiveBattles(): Promise<{ success: boolean; battleMetas?: BattleMeta[]; message?: string }> {
+    try {
+      if (!this.isInitialized || !this.factoryContract) {
+        throw new Error("Contract not initialized. Please connect wallet first.");
+      }
+      
+      const battleMetas = await this.factoryContract.getActiveBattles();
+      
+      return {
+        success: true,
+        battleMetas: battleMetas.map((meta: any) => ({
+          battleId: Number(meta.battleId),
+          battleContract: meta.battleContract,
+          player1: meta.player1,
+          player1Bet: meta.player1Bet,
+          player2: meta.player2,
+          player2Bet: meta.player2Bet,
+          betAmount: meta.betAmount,
+          minimumCommittee: Number(meta.minimumCommittee),
+          durationInDays: Number(meta.durationInDays),
+          title: meta.title,
+          isAccepted: meta.isAccepted,
+          sideBettingContract: meta.sideBettingContract
+        }))
+      };
+    } catch (error) {
+      console.error("Failed to get active battles:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error occurred while getting active battles"
+      };
+    }
+  }
+
+  async getBattleMetaById(battleId: number): Promise<{ success: boolean; battleMeta?: BattleMeta; message?: string }> {
+    try {
+      if (!this.isInitialized || !this.factoryContract) {
+        throw new Error("Contract not initialized. Please connect wallet first.");
+      }
+      
+      const meta = await this.factoryContract.getBattleMetaById(battleId);
+      
+      return {
+        success: true,
+        battleMeta: {
+          battleId: Number(meta.battleId),
+          battleContract: meta.battleContract,
+          player1: meta.player1,
+          player1Bet: meta.player1Bet,
+          player2: meta.player2,
+          player2Bet: meta.player2Bet,
+          betAmount: meta.betAmount,
+          minimumCommittee: Number(meta.minimumCommittee),
+          durationInDays: Number(meta.durationInDays),
+          title: meta.title,
+          isAccepted: meta.isAccepted,
+          sideBettingContract: meta.sideBettingContract
+        }
+      };
+    } catch (error) {
+      console.error("Failed to get battle meta by id:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error occurred while getting battle meta"
       };
     }
   }

@@ -132,6 +132,114 @@ export function useBattleLogic() {
   // 에러 상태
   const [error, setError] = useState<string | null>(null);
   
+  // 배틀 데이터 로딩 상태 추가
+  const [isLoadingBattles, setIsLoadingBattles] = useState<boolean>(false);
+  
+  // 배틀 데이터 로딩 함수
+  const loadBattleData = useCallback(async () => {
+    try {
+      if (!provider || !isConnected) {
+        console.log("지갑이 연결되지 않았습니다.");
+        return;
+      }
+
+      setIsLoadingBattles(true);
+      console.log("배틀 데이터 로딩 시작");
+
+      // BattleFactoryService 초기화
+      const { BattleFactoryService } = await import('../services/contracts');
+      
+      // ENS 비활성화된 provider 생성
+      const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
+        chainId: 133, // HashKey Testnet chainId
+        name: 'HashKey Testnet',
+        ensAddress: undefined // ENS 비활성화
+      });
+      
+      const battleFactoryService = new BattleFactoryService(web3Provider);
+
+      // 활성 배틀 로드
+      const activeBattlesResult = await battleFactoryService.getActiveBattles();
+      if (activeBattlesResult.success && activeBattlesResult.battleMetas) {
+        const formattedHotBattles = activeBattlesResult.battleMetas.map(meta => ({
+          id: meta.battleId,
+          title: meta.title,
+          optionA: meta.player1Bet,
+          optionB: meta.player2Bet,
+          betAmount: ethers.formatEther(meta.betAmount),
+          participants: 2, // player1과 player2가 있으므로
+          waiting: false,
+          contractAddress: meta.battleContract,
+          contractType: 'Faucet' as const,
+          quizzesA: [], // 실제 퀴즈 데이터는 별도로 로드 필요
+          quizzesB: [],
+          quizzesAAnswers: [],
+          quizzesBAnswers: []
+        }));
+        setHotBattles(formattedHotBattles);
+      }
+
+      // 대기 중인 배틀 로드
+      const waitingBattlesResult = await battleFactoryService.getWaitingBattles();
+      if (waitingBattlesResult.success && waitingBattlesResult.battleMetas) {
+        const formattedWaitingBattles = waitingBattlesResult.battleMetas.map(meta => ({
+          id: meta.battleId,
+          title: meta.title,
+          optionA: meta.player1Bet,
+          optionB: "Open for challenge",
+          betAmount: ethers.formatEther(meta.betAmount),
+          participants: 1,
+          waiting: true,
+          contractAddress: meta.battleContract,
+          contractType: 'Faucet' as const,
+          quizzesA: [], // 실제 퀴즈 데이터는 별도로 로드 필요
+          quizzesB: [],
+          quizzesAAnswers: [],
+          quizzesBAnswers: []
+        }));
+        setWaitingBattles(formattedWaitingBattles);
+      }
+
+      // 내 배틀 로드 (내 주소로 필터링)
+      const allBattlesResult = await battleFactoryService.getAllBattleMetas();
+      if (allBattlesResult.success && allBattlesResult.battleMetas) {
+        const myBattlesList = allBattlesResult.battleMetas
+          .filter(meta => meta.player1 === account || meta.player2 === account)
+          .map(meta => ({
+            id: meta.battleId,
+            title: meta.title,
+            optionA: meta.player1Bet,
+            optionB: meta.player2Bet || "Open for challenge",
+            betAmount: ethers.formatEther(meta.betAmount),
+            participants: meta.player2 ? 2 : 1,
+            waiting: !meta.isAccepted,
+            contractAddress: meta.battleContract,
+            contractType: meta.isAccepted ? 'SideBetting' as const : 'Faucet' as const,
+            myChoice: meta.player1 === account ? 'optionA' : 'optionB',
+            quizzesA: [], // 실제 퀴즈 데이터는 별도로 로드 필요
+            quizzesB: [],
+            quizzesAAnswers: [],
+            quizzesBAnswers: []
+          }));
+        setMyBattles(myBattlesList);
+      }
+
+      console.log("배틀 데이터 로딩 완료");
+    } catch (error) {
+      console.error("배틀 데이터 로딩 중 오류:", error);
+      setError("배틀 데이터를 불러오는 중 오류가 발생했습니다.");
+    } finally {
+      setIsLoadingBattles(false);
+    }
+  }, [provider, isConnected, account]);
+
+  // 지갑 연결 시 배틀 데이터 로드
+  useEffect(() => {
+    if (isConnected && provider) {
+      loadBattleData();
+    }
+  }, [isConnected, provider, loadBattleData]);
+  
   // 초기화 함수
   useEffect(() => {
     try {
@@ -184,7 +292,11 @@ export function useBattleLogic() {
     if (typeof window !== 'undefined' && (window as any).ethereum) {
       try {
         console.log("🔍 메타마스크 연결 확인 중...");
-        const web3Provider = new ethers.BrowserProvider((window as any).ethereum);
+        const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
+          chainId: 133, // HashKey Testnet chainId
+          name: 'HashKey Testnet',
+          ensAddress: undefined // ENS 비활성화
+        });
         const accounts = await web3Provider.listAccounts();
         
         if (accounts.length > 0) {
@@ -226,8 +338,12 @@ export function useBattleLogic() {
           method: 'eth_requestAccounts' 
         });
         
-        // Then initialize the provider
-        const web3Provider = new ethers.BrowserProvider((window as any).ethereum);
+        // Then initialize the provider with ENS disabled
+        const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
+          chainId: 133, // HashKey Testnet chainId
+          name: 'HashKey Testnet',
+          ensAddress: undefined // ENS 비활성화
+        });
         
         // Update state
         setAccount(accounts[0]);
@@ -785,9 +901,11 @@ export function useBattleLogic() {
   
         // Deploy the battle contract
         const result = await battleFactoryService.deployBattleContract(
-          battleId,
-          betAmount, 
-          3 // minimumCommittee
+          3, // minimumCommittee
+          betAmount,
+          battle.optionA, // player1Bet
+          7, // durationInDays
+          battle.title // title
         );
         
         if (!result.success) {
@@ -796,7 +914,16 @@ export function useBattleLogic() {
           return null;
         }
         
-        console.log("Contract deployed:", result);
+        console.log("🎮 배틀 컨트랙트 배포 성공!");
+        console.log("📝 배틀 정보:", {
+          title: battle.title,
+          optionA: battle.optionA,
+          betAmount,
+          minimumCommittee: 3,
+          durationInDays: 7
+        });
+        console.log("🔗 컨트랙트 주소:", result.contractAddress);
+        console.log("🔗 트랜잭션 해시:", result.txHash);
         console.log("✅ 컨트랙트 배포 완료");
         
         return {
@@ -1142,6 +1269,7 @@ export function useBattleLogic() {
     showVotingPopup,
     selectedVote,
     allAnswersCorrect,
+    isLoadingBattles,
     
     // 함수들
     setAccount,
@@ -1187,6 +1315,7 @@ export function useBattleLogic() {
     handleCreateBattle,
     handleOpenChallenge,
     handleChallengerQuizChange,
-    handleAcceptChallenge
+    handleAcceptChallenge,
+    loadBattleData
   };
 }

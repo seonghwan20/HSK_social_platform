@@ -5,10 +5,19 @@ export default function BattleList() {
     hotBattles, 
     waitingBattles, 
     myBattles,
+    isLoadingBattles,
     handleViewBattleDetails, 
     handleJoinCommittee,
     handleOpenChallenge
   } = useBattleLogic();
+  
+  if (isLoadingBattles) {
+    return (
+      <div className="flex justify-center items-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+      </div>
+    );
+  }
   
   return (
     <div className="battle-list space-y-6">
@@ -35,7 +44,7 @@ export default function BattleList() {
                   </div>
                 </div>
                 <div className="flex justify-between text-xs text-gray-400 mb-3">
-                  <span>Bet: {battle.betAmount} KRW</span>
+                  <span>Bet: {battle.betAmount} HSK</span>
                   <span>Participants: {battle.participants || 0}</span>
                 </div>
                 <div className="flex gap-2">
@@ -77,7 +86,7 @@ export default function BattleList() {
                   <span className="text-yellow-400 text-xs">Awaiting Challenger</span>
                 </div>
                 <div className="flex justify-between text-xs text-gray-400 mb-3">
-                  <span>Bet: {battle.betAmount} KRW</span>
+                  <span>Bet: {battle.betAmount} HSK</span>
                   <span>Status: <span className="text-yellow-400">Waiting</span></span>
                 </div>
                 <div className="flex gap-2">
@@ -124,7 +133,7 @@ export default function BattleList() {
                 </div>
                 <div className="flex justify-between text-xs text-gray-400 mb-3">
                   <span>My choice: <span className="text-green-400">{battle.myChoice === 'optionA' ? battle.optionA : battle.optionB}</span></span>
-                  <span>Bet: {battle.betAmount} KRW</span>
+                  <span>Bet: {battle.betAmount} HSK</span>
                 </div>
                 <div className="flex gap-2">
                   <button 
