@@ -13,15 +13,40 @@ contract Faucet {
     uint256 public minimumCommittee;
     uint256 public committeeCount;
     bool public gameValid;
+    string public player1Bet;
+    string public player2Bet;
+    uint256 public quizCount;
+    string public title;
+
     
     // 게임 기간 관련 변수
     uint256 public gameDeadline; // 게임 종료 시간 (배팅+투표 기간)
     bool public gameActive; // 게임 활성화 상태
+
+    struct Quiz{
+        string question;
+        bytes32 answerHash;
+        bool solved;
+        address creator;
+    }
     
+    struct QuizInput {
+    string question;
+    bytes32 answerHash;
+    }
     // 각 주소별 보유한 자금
     mapping(address => uint256) public stash;
     // 위원회 멤버 목록
     mapping(address => bool) public committeeList;
+    // 퀴즈 목록
+    mapping(uint256 => Quiz) public quizzes;
+
+    mapping(address => uint256) public solvedCount;
+
+
+
+
+
 
     // 베팅 기간 enum
     enum BetDuration {
@@ -38,32 +63,38 @@ contract Faucet {
     event MinimumCommitteeMet(uint256 count);
     event GameEnded(address winner);
     event VotingPhaseStarted();
+    event GameJoined();
+    event QuizCreated(uint256 quizId, string question);
+    event QuizSolved(address solver, uint256 quizId);
+    event AllQuizzesSolved(address solver);
 
     /**
      * @dev 컨트랙트 생성자
      * @param _player1 첫 번째 플레이어 주소
-     * @param _player2 두 번째 플레이어 주소
      * @param _betAmount 베팅 금액
      * @param _minimumCommittee 최소 필요 위원회 인원 수
      */
     constructor(
         address _player1,
-        address _player2, 
         uint256 _betAmount,
-        uint256 _minimumCommittee
+        uint256 _minimumCommittee,
+        string memory _player1Bet,
+        uint8 _durationInDays,
+        string memory _title
+        
     ) {
         require(_player1 != address(0), "Player1 cannot be zero address");
-        require(_player2 != address(0), "Player2 cannot be zero address");
-        require(_player1 != _player2, "Players must be different");
         require(_betAmount > 0, "Bet amount must be greater than zero");
         require(_minimumCommittee > 0, "Minimum committee must be greater than zero");
         
         player1 = _player1;
-        player2 = _player2;
+        player1Bet = _player1Bet;
         betAmount = _betAmount;
         minimumCommittee = _minimumCommittee;
         gameActive = false;
         gameValid = false;
+        gameDeadline = _durationInDays;
+        title = _title;
     }
 
     /**
@@ -75,19 +106,55 @@ contract Faucet {
         emit GameFunded(msg.sender, msg.value);
     }
 
+    // 백엔드에서 만든 answer hash 받아와서 저장
+    function createQuiz(QuizInput[] memory inputs) public {
+
+        require(msg.sender == player1 || msg.sender == player2, "Only players can create quizzes");
+
+         for (uint256 i = 0; i < inputs.length; i++) {
+        quizzes[quizCount] = Quiz({
+            question: inputs[i].question,
+            answerHash: inputs[i].answerHash,
+            solved: false,
+            creator: msg.sender
+        });
+        emit QuizCreated(quizCount, inputs[i].question);
+        quizCount++;
+        }
+
+    }
+
+    // 사용자 B의 배틀 참가
+     function joinGame(string memory _player2Bet, address _player2) public {
+
+        require(_player2 != player1 , "player1 cannot join the game");
+        require( keccak256(abi.encodePacked(_player2Bet)) != keccak256(abi.encodePacked(player1Bet)),
+        "player2's bet must be different from player1's bet");
+
+        player2 = _player2;
+        player2Bet = _player2Bet;
+
+        FundGame();
+
+        emit GameJoined();
+
+        if (stash[player1] >= betAmount && stash[player2] >= betAmount && !gameActive) {
+            startGame();
+        }
+
+        
+    }
     /**
      * @dev 게임 시작 - 기간 설정 및 게임 초기화
-     * @param _durationInDays 게임 배팅 기간(일)
      */
-    function startGame(uint8 _durationInDays) public {
+    function startGame() private {
         require(msg.sender == player1 || msg.sender == player2, "Only players can start the game");
         require(!gameActive, "Game already active");
-        require(_durationInDays > 0 && _durationInDays <= 7, "Duration must be between 1 and 7 days");
         require(stash[player1] >= betAmount, "Player1 needs to fund the game first");
         require(stash[player2] >= betAmount, "Player2 needs to fund the game first");
         
         // 게임 기간 설정 (현재 시간 + 일수 * 하루 초)
-        gameDeadline = block.timestamp + (_durationInDays * 1 days);
+        gameDeadline = block.timestamp + (gameDeadline * 1 days);
         
         // 베팅 금액을 플레이어 계정에서 차감
         stash[player1] -= betAmount;
@@ -125,6 +192,26 @@ contract Faucet {
             emit MinimumCommitteeMet(committeeCount);
         }
     }
+
+    // commitee 희망자가 다 맞추면 프론트에 log 보내기
+    function submitAnswerHashes(uint256[] memory quizIds, bytes32[] memory providedHashes) public {
+        require(quizIds.length == providedHashes.length, "Mismatched input arrays");
+
+        for (uint256 i = 0; i < quizIds.length; i++) {
+            uint256 quizId = quizIds[i];
+            require(!quizzes[quizId].solved, "Quiz already solved");
+
+            if (quizzes[quizId].answerHash == providedHashes[i]) {
+                    quizzes[quizId].solved = true;
+                    solvedCount[msg.sender] += 1;
+            }
+
+            if(solvedCount[msg.sender] == quizCount){
+                emit AllQuizzesSolved(msg.sender);
+            }
+
+        }
+}
 
     /**
      * @dev 게임이 투표 단계인지 확인
