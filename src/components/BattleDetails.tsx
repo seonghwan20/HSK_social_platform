@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 export default function BattleDetails() {
   const { 
     selectedBattleDetails,
-    battleStatus,
     handleJoinCommittee,
     handleSubmitVote
   } = useBattleLogic();
@@ -16,7 +15,7 @@ export default function BattleDetails() {
   } | null>(null);
 
   useEffect(() => {
-    if (!selectedBattleDetails?.contractAddress || !battleStatus?.votingPhase) {
+    if (!selectedBattleDetails?.contractAddress) {
       return;
     }
 
@@ -41,13 +40,17 @@ export default function BattleDetails() {
     return () => {
       unsubscribe.then(fn => fn?.());
     };
-  }, [selectedBattleDetails?.contractAddress, battleStatus?.votingPhase]);
+  }, [selectedBattleDetails?.contractAddress]);
 
-  if (!selectedBattleDetails || !battleStatus) {
+  if (!selectedBattleDetails) {
     return null;
   }
 
-  const renderStatusBadge = (status: BattleStatus) => {
+  const renderStatusBadge = (status: BattleStatus | undefined) => {
+    if (!status) {
+      return null;
+    }
+    
     if (status.gameEnded) {
       return (
         <div className="bg-red-900/60 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-medium">
@@ -83,7 +86,11 @@ export default function BattleDetails() {
     return null;
   };
 
-  const renderActionButtons = (status: BattleStatus) => {
+  const renderActionButtons = (status: BattleStatus | undefined) => {
+    if (!status) {
+      return null;
+    }
+    
     if (status.gameEnded) {
       return (
         <div className="text-center text-gray-400">
@@ -106,7 +113,7 @@ export default function BattleDetails() {
     if (status.committeeRecruitmentOpen) {
       return (
         <button
-          onClick={() => handleJoinCommittee(selectedBattleDetails)}
+          onClick={() => handleJoinCommittee(selectedBattleDetails!)}
           className="bg-yellow-600 hover:bg-yellow-700 text-white py-3 rounded-lg font-medium w-full"
         >
           Join Committee
@@ -125,7 +132,7 @@ export default function BattleDetails() {
   return (
     <div className="battle-details">
       <div className="mb-4">
-        {renderStatusBadge(battleStatus)}
+        {renderStatusBadge(selectedBattleDetails.status)}
       </div>
       
       <div className="battle-info">
@@ -170,7 +177,7 @@ export default function BattleDetails() {
           </div>
         </div>
         
-        {renderActionButtons(battleStatus)}
+        {renderActionButtons(selectedBattleDetails.status)}
       </div>
     </div>
   );

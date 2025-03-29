@@ -2,6 +2,9 @@ import { ethers } from 'ethers';
 import { Faucet, Faucet__factory } from '../../../contracts/typechain-types';
 import { BattleStatus } from './types';
 
+// Hashkey Testnet RPC URL
+const HASHKEY_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://hashkeychain-testnet.alt.technology';
+
 const BATTLE_FACTORY_ABI = [
   "function createBattle(uint256 battleId, address player1, uint256 minimumCommittee, uint256 betAmount) external payable returns (address)",
   "function acceptBattle(uint256 battleId, address player2) external returns (address)",
@@ -15,6 +18,7 @@ const BATTLE_FACTORY_ABI = [
 export class FaucetService {
   private provider: ethers.Provider | null;
   private signer: ethers.Signer | null;
+  private defaultProvider: ethers.Provider | null = null;
   
   constructor(provider: ethers.Provider | null) {
     this.provider = provider;
@@ -23,16 +27,34 @@ export class FaucetService {
     if (provider && typeof window !== 'undefined' && window.ethereum) {
       this.initializeSigner();
     }
+    
+    // 기본 프로바이더 초기화 (읽기 전용)
+    this.initializeDefaultProvider();
   }
   
   private async initializeSigner() {
     try {
       if (this.provider) {
-        const provider = new ethers.BrowserProvider(window.ethereum);
+        // ENS 비활성화된 provider 생성
+        const provider = new ethers.BrowserProvider(window.ethereum, {
+          chainId: 133, // HashKey Testnet chainId
+          name: 'HashKey Testnet',
+          ensAddress: undefined // ENS 비활성화
+        });
         this.signer = await provider.getSigner();
       }
     } catch (error) {
       console.error("Failed to initialize signer:", error);
+    }
+  }
+  
+  private initializeDefaultProvider() {
+    try {
+      // Hashkey testnet RPC URL로 직접 연결
+      this.defaultProvider = new ethers.JsonRpcProvider(HASHKEY_RPC_URL);
+      console.log("FaucetService: Default provider initialized");
+    } catch (error) {
+      console.error("FaucetService: Failed to initialize default provider:", error);
     }
   }
   
@@ -41,19 +63,22 @@ export class FaucetService {
    */
   async connectToContract(contractAddress: string): Promise<Faucet | null> {
     try {
-      if (!this.provider) {
-        throw new Error("Provider not set");
+      if (!this.provider && !this.defaultProvider) {
+        throw new Error("No provider available");
       }
       
-      if (!this.signer) {
-        await this.initializeSigner();
+      if (this.signer) {
+        // 사이너가 있는 경우 쓰기 가능한 컨트랙트 인스턴스 반환
+        return Faucet__factory.connect(contractAddress, this.signer);
+      } else if (this.defaultProvider) {
+        // 사이너가 없는 경우 읽기 전용 컨트랙트 인스턴스 반환
+        return Faucet__factory.connect(contractAddress, this.defaultProvider);
+      } else if (this.provider) {
+        // 사이너가 없지만 프로바이더가 있는 경우 읽기 전용 컨트랙트 인스턴스 반환
+        return Faucet__factory.connect(contractAddress, this.provider);
+      } else {
+        throw new Error("No provider or signer available");
       }
-      
-      if (!this.signer) {
-        throw new Error("Signer not available");
-      }
-      
-      return Faucet__factory.connect(contractAddress, this.signer);
     } catch (error) {
       console.error("Failed to connect to Faucet contract:", error);
       return null;
@@ -143,6 +168,11 @@ export class FaucetService {
     message?: string;
   }> {
     try {
+      // 사이너가 필요한 작업이므로 사이너 확인
+      if (!this.signer) {
+        throw new Error("Wallet not connected. Please connect your wallet to fund a game.");
+      }
+      
       const contract = await this.connectToContract(contractAddress);
       
       if (!contract) {
@@ -150,7 +180,7 @@ export class FaucetService {
       }
       
       const tx = await contract.FundGame({
-        value: ethers.parseEther(betAmount)
+        value: ethers.parseUnits(betAmount, 'gwei')
       });
       
       console.log("Fund game transaction sent:", tx.hash);
@@ -180,6 +210,11 @@ export class FaucetService {
     message?: string;
   }> {
     try {
+      // 사이너가 필요한 작업이므로 사이너 확인
+      if (!this.signer) {
+        throw new Error("Wallet not connected. Please connect your wallet to start a game.");
+      }
+      
       const contract = await this.connectToContract(contractAddress);
       
       if (!contract) {
@@ -215,6 +250,11 @@ export class FaucetService {
     message?: string;
   }> {
     try {
+      // 사이너가 필요한 작업이므로 사이너 확인
+      if (!this.signer) {
+        throw new Error("Wallet not connected. Please connect your wallet to add committee member.");
+      }
+      
       const contract = await this.connectToContract(contractAddress);
       
       if (!contract) {
@@ -233,7 +273,7 @@ export class FaucetService {
         txHash: tx.hash
       };
     } catch (error) {
-      console.error("Failed to add committee member:", error);
+      console.error("Failed to add committee:", error);
       return {
         success: false,
         message: error instanceof Error ? error.message : "Unknown error"
@@ -330,7 +370,7 @@ export class FaucetService {
         throw new Error("Failed to connect to contract");
       }
       
-      const tx = await contract.withdraw(ethers.parseEther(amount));
+      const tx = await contract.withdraw(ethers.parseUnits(amount, 'gwei'));
       
       console.log("Withdraw transaction sent:", tx.hash);
       
@@ -529,6 +569,52 @@ export class FaucetService {
     return () => {
       contract.removeAllListeners();
     };
+  }
+
+  /**
+   * Join a game as player2
+   */
+  async joinGame(contractAddress: string, player2Bet: string): Promise<{
+    success: boolean;
+    txHash?: string;
+    message?: string;
+  }> {
+    try {
+      // 사이너가 필요한 작업이므로 사이너 확인
+      if (!this.signer) {
+        throw new Error("Wallet not connected. Please connect your wallet to join a game.");
+      }
+      
+      const contract = await this.connectToContract(contractAddress);
+      
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+      
+      const signer = await this.signer;
+      const address = await signer.getAddress();
+      
+      // 함수 파라미터 순서가 올바르게 - (string _player2Bet, address _player2)
+      const tx = await (contract as any).joinGame(player2Bet, address, {
+        value: ethers.parseUnits(player2Bet, 'gwei')
+      });
+      
+      console.log("Join game transaction sent:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Join game transaction confirmed:", receipt);
+      
+      return {
+        success: true,
+        txHash: tx.hash
+      };
+    } catch (error) {
+      console.error("Failed to join game:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
   }
 }
 

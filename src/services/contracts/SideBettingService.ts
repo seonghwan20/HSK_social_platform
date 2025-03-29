@@ -1,9 +1,14 @@
 import { ethers } from 'ethers';
 import { SideBetting, SideBetting__factory } from '../../../contracts/typechain-types';
+import { formatEther } from '../../utils/ethers';
+
+// Hashkey Testnet RPC URL
+const HASHKEY_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://hashkeychain-testnet.alt.technology';
 
 export class SideBettingService {
   private provider: ethers.Provider | null;
   private signer: ethers.Signer | null;
+  private defaultProvider: ethers.Provider | null = null;
   
   constructor(provider: ethers.Provider | null) {
     this.provider = provider;
@@ -12,16 +17,34 @@ export class SideBettingService {
     if (provider && typeof window !== 'undefined' && window.ethereum) {
       this.initializeSigner();
     }
+
+    // 기본 프로바이더 초기화 (읽기 전용)
+    this.initializeDefaultProvider();
   }
   
   private async initializeSigner() {
     try {
       if (this.provider) {
-        const provider = new ethers.BrowserProvider(window.ethereum);
+        // ENS 비활성화된 provider 생성
+        const provider = new ethers.BrowserProvider(window.ethereum, {
+          chainId: 133, // HashKey Testnet chainId
+          name: 'HashKey Testnet',
+          ensAddress: undefined // ENS 비활성화
+        });
         this.signer = await provider.getSigner();
       }
     } catch (error) {
       console.error("Failed to initialize signer:", error);
+    }
+  }
+
+  private initializeDefaultProvider() {
+    try {
+      // Hashkey testnet RPC URL로 직접 연결
+      this.defaultProvider = new ethers.JsonRpcProvider(HASHKEY_RPC_URL);
+      console.log("SideBettingService: Default provider initialized");
+    } catch (error) {
+      console.error("SideBettingService: Failed to initialize default provider:", error);
     }
   }
   
@@ -30,19 +53,22 @@ export class SideBettingService {
    */
   async connectToContract(contractAddress: string): Promise<SideBetting | null> {
     try {
-      if (!this.provider) {
-        throw new Error("Provider not set");
+      if (!this.provider && !this.defaultProvider) {
+        throw new Error("No provider available");
       }
       
-      if (!this.signer) {
-        await this.initializeSigner();
+      if (this.signer) {
+        // 사이너가 있는 경우 쓰기 가능한 컨트랙트 인스턴스 반환
+        return SideBetting__factory.connect(contractAddress, this.signer);
+      } else if (this.defaultProvider) {
+        // 사이너가 없는 경우 읽기 전용 컨트랙트 인스턴스 반환
+        return SideBetting__factory.connect(contractAddress, this.defaultProvider);
+      } else if (this.provider) {
+        // 사이너가 없지만 프로바이더가 있는 경우 읽기 전용 컨트랙트 인스턴스 반환
+        return SideBetting__factory.connect(contractAddress, this.provider);
+      } else {
+        throw new Error("No provider or signer available");
       }
-      
-      if (!this.signer) {
-        throw new Error("Signer not available");
-      }
-      
-      return SideBetting__factory.connect(contractAddress, this.signer);
     } catch (error) {
       console.error("Failed to connect to SideBetting contract:", error);
       return null;
@@ -52,29 +78,45 @@ export class SideBettingService {
   /**
    * Place a bet on a game
    */
-  async placeBet(contractAddress: string, gameId: number, playerChoice: string, betAmount: string): Promise<{
+  async placeBet(
+    contractAddress: string,
+    battleId: number,
+    playerChoice: string,
+    betAmount: string
+  ): Promise<{
     success: boolean;
-    txHash?: string;
     message?: string;
+    txHash?: string;
   }> {
     try {
+      // 사이너가 필요한 작업이므로 사이너 확인
+      if (!this.signer) {
+        throw new Error("Wallet not connected. Please connect your wallet to place a bet.");
+      }
+      
       const contract = await this.connectToContract(contractAddress);
       
       if (!contract) {
         throw new Error("Failed to connect to contract");
       }
       
-      // Convert bet amount to wei
-      const betAmountWei = ethers.parseEther(betAmount);
+      // Convert bet amount to HSK
+      const betAmountGwei = ethers.parseUnits(betAmount, 'gwei');
       
-      const tx = await contract.placeBet(gameId, playerChoice, {
-        value: betAmountWei
+      console.log(`Placing bet on contract ${contractAddress}, battle ID ${battleId}, player choice ${playerChoice}, amount ${betAmount} HSK`);
+      
+      const tx = await contract.placeBet(battleId, playerChoice, {
+        value: betAmountGwei
       });
       
-      console.log("Place bet transaction sent:", tx.hash);
+      console.log("Bet transaction sent:", tx.hash);
       
       const receipt = await tx.wait();
-      console.log("Place bet transaction confirmed:", receipt);
+      console.log("Bet transaction confirmed:", receipt);
+      
+      if (!receipt) {
+        throw new Error("Transaction failed: No receipt received");
+      }
       
       return {
         success: true,
@@ -82,9 +124,23 @@ export class SideBettingService {
       };
     } catch (error) {
       console.error("Failed to place bet:", error);
+      
+      // 사용자 친화적인 오류 메시지
+      let errorMessage = "Failed to place bet";
+      if (error instanceof Error) {
+        // 오류 메시지에서 필요한 정보 추출
+        if (error.message.includes("insufficient funds")) {
+          errorMessage = "Insufficient funds in your wallet";
+        } else if (error.message.includes("user rejected transaction")) {
+          errorMessage = "Transaction rejected by user";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       return {
         success: false,
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: errorMessage
       };
     }
   }
@@ -132,6 +188,11 @@ export class SideBettingService {
     message?: string;
   }> {
     try {
+      // 사이너가 필요한 작업이므로 사이너 확인
+      if (!this.signer) {
+        throw new Error("Wallet not connected. Please connect your wallet to claim winnings.");
+      }
+      
       const contract = await this.connectToContract(contractAddress);
       
       if (!contract) {
@@ -181,11 +242,11 @@ export class SideBettingService {
       
       return {
         success: true,
-        totalPool: ethers.formatEther(stats[0]),
+        totalPool: formatEther(stats[0]),
         winner: stats[1],
         resultSet: stats[2],
-        player1BetAmount: ethers.formatEther(stats[3]),
-        player2BetAmount: ethers.formatEther(stats[4])
+        player1BetAmount: formatEther(stats[3]),
+        player2BetAmount: formatEther(stats[4])
       };
     } catch (error) {
       console.error("Failed to get game stats:", error);

@@ -1,8 +1,9 @@
 import { ethers } from 'ethers';
+import { parseEther } from '../../utils/ethers';
 
 // HashKey Testnet network information
 const HASHKEY_CHAIN_ID = '0x85';  // 133 in hex
-const HASHKEY_RPC_URL = 'https://hashkeychain-testnet.alt.technology';
+const HASHKEY_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://hashkeychain-testnet.alt.technology';
 const HASHKEY_CHAIN_NAME = 'HashKey Testnet';
 const HASHKEY_CURRENCY_SYMBOL = 'HSK';
 const HASHKEY_EXPLORER_URL = 'https://hashkeychain-testnet-explorer.alt.technology';
@@ -47,6 +48,33 @@ export class BattleFactoryService {
   
   constructor(provider: ethers.Provider | null) {
     this.setProvider(provider);
+    
+    // 지갑 연결이 없어도 기본 프로바이더로 초기화
+    if (!provider) {
+      this.initializeWithDefaultProvider();
+    }
+  }
+  
+  /**
+   * 기본 프로바이더로 초기화 (지갑 연결 없이도 데이터 읽기 가능)
+   */
+  private initializeWithDefaultProvider(): void {
+    try {
+      // Hashkey testnet RPC URL로 직접 연결
+      const defaultProvider = new ethers.JsonRpcProvider(HASHKEY_RPC_URL);
+      
+      this.provider = defaultProvider;
+      this.factoryContract = new ethers.Contract(
+        BATTLE_FACTORY_ADDRESS,
+        BATTLE_FACTORY_ABI,
+        defaultProvider
+      );
+      
+      this.isInitialized = true;
+      console.log("BattleFactoryService: Contract initialized with default provider");
+    } catch (error) {
+      console.error("BattleFactoryService: Failed to initialize with default provider:", error);
+    }
   }
   
   /**
@@ -76,9 +104,9 @@ export class BattleFactoryService {
       } catch (error) {
         console.error("BattleFactoryService: Failed to initialize contract:", error);
         this.factoryContract = null;
+        // 지갑 연결 실패 시 기본 프로바이더로 대체
+        this.initializeWithDefaultProvider();
       }
-    } else {
-      this.factoryContract = null;
     }
   }
   
@@ -276,9 +304,9 @@ export class BattleFactoryService {
       const signer = await this.getSigner();
       const signerAddress = await signer.getAddress();
       
-      console.log(`Creating battle with player1 ${signerAddress}, minimum committee ${minimumCommittee}, bet amount ${betAmount}`);
+      console.log(`Creating battle with player1 ${signerAddress}, minimum committee ${minimumCommittee}, bet amount ${betAmount} HSK`);
       
-      const betAmountWei = ethers.parseEther(betAmount);
+      const betAmountGwei = parseEther(betAmount);
       
       const writableContract = this.factoryContract.connect(signer);
       
@@ -286,7 +314,7 @@ export class BattleFactoryService {
         const estimatedGas = await (writableContract as any).createBattle.estimateGas(
           signerAddress,
           minimumCommittee,
-          betAmountWei,
+          betAmountGwei,
           player1Bet,
           durationInDays,
           title
@@ -299,7 +327,7 @@ export class BattleFactoryService {
         const tx = await (writableContract as any).createBattle(
           signerAddress,
           minimumCommittee,
-          betAmountWei,
+          betAmountGwei,
           player1Bet,
           durationInDays,
           title,
@@ -374,7 +402,8 @@ export class BattleFactoryService {
    */
   async acceptBattle(
     battleId: number,
-    player2Bet: string
+    player2Bet: string,
+    options?: { value?: ethers.BigNumberish }
   ): Promise<{ success: boolean; contractAddress?: string; message?: string; txHash?: string }> {
     try {
       if (!this.isInitialized || !this.factoryContract) {
@@ -395,10 +424,25 @@ export class BattleFactoryService {
       const signer = await this.getSigner();
       const writableContract = this.factoryContract.connect(signer);
       
+      // 배틀 메타데이터 가져오기
+      const battleMeta = await this.getBattleMeta(battleId);
+      if (!battleMeta.success || !battleMeta.meta) {
+        return {
+          success: false,
+          message: "배틀 메타데이터를 가져오는데 실패했습니다."
+        };
+      }
+      
+      // 베팅 금액이 전달되지 않은 경우 메타데이터의 값을 사용 (HSK 단위)
+      const value = options?.value || parseEther(battleMeta.meta.betAmount.toString());
+      
       try {
+        console.log(`Accepting battle with ID ${battleId}, player2Bet ${player2Bet}, value ${value} (${battleMeta.meta.betAmount} HSK)`);
+        
         const estimatedGas = await (writableContract as any).acceptBattle.estimateGas(
           battleId,
-          player2Bet
+          player2Bet,
+          { value }
         );
         
         const gasLimit = Math.floor(Number(estimatedGas) * 1.2);
@@ -406,7 +450,10 @@ export class BattleFactoryService {
         const tx = await (writableContract as any).acceptBattle(
           battleId,
           player2Bet,
-          { gasLimit }
+          { 
+            gasLimit,
+            value
+          }
         );
         console.log("Transaction sent:", tx.hash);
         
@@ -467,6 +514,50 @@ export class BattleFactoryService {
       return {
         success: false,
         message: error instanceof Error ? error.message : "Unknown error occurred while accepting battle"
+      };
+    }
+  }
+  
+  /**
+   * Get battle metadata
+   */
+  async getBattleMeta(
+    battleId: number
+  ): Promise<{ success: boolean; meta?: any; message?: string }> {
+    try {
+      if (!this.isInitialized || !this.factoryContract) {
+        this.initializeWithDefaultProvider();
+        
+        if (!this.isInitialized || !this.factoryContract) {
+          throw new Error("Contract not initialized. Please connect wallet first.");
+        }
+      }
+      
+      // battleMetas는 함수가 아니므로 getBattleMetaById 함수를 대신 사용
+      const battleMeta = await this.factoryContract.getBattleMetaById(battleId);
+      
+      return {
+        success: true,
+        meta: {
+          battleId: Number(battleMeta.battleId),
+          battleContract: battleMeta.battleContract,
+          player1: battleMeta.player1,
+          player1Bet: battleMeta.player1Bet,
+          player2: battleMeta.player2,
+          player2Bet: battleMeta.player2Bet,
+          betAmount: battleMeta.betAmount,
+          minimumCommittee: Number(battleMeta.minimumCommittee),
+          durationInDays: Number(battleMeta.durationInDays),
+          title: battleMeta.title,
+          isAccepted: battleMeta.isAccepted,
+          sideBettingContract: battleMeta.sideBettingContract
+        }
+      };
+    } catch (error) {
+      console.error("Failed to get battle meta:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error occurred while getting battle meta"
       };
     }
   }
@@ -566,7 +657,12 @@ export class BattleFactoryService {
   async getAllBattleMetas(): Promise<{ success: boolean; battleMetas?: BattleMeta[]; message?: string }> {
     try {
       if (!this.isInitialized || !this.factoryContract) {
-        throw new Error("Contract not initialized. Please connect wallet first.");
+        // 초기화되지 않았으면 기본 프로바이더로 초기화 시도
+        this.initializeWithDefaultProvider();
+        
+        if (!this.isInitialized || !this.factoryContract) {
+          throw new Error("Contract not initialized and failed to initialize with default provider.");
+        }
       }
       
       const battleMetas = await this.factoryContract.getAllBattleMetas();
@@ -600,7 +696,12 @@ export class BattleFactoryService {
   async getWaitingBattles(): Promise<{ success: boolean; battleMetas?: BattleMeta[]; message?: string }> {
     try {
       if (!this.isInitialized || !this.factoryContract) {
-        throw new Error("Contract not initialized. Please connect wallet first.");
+        // 초기화되지 않았으면 기본 프로바이더로 초기화 시도
+        this.initializeWithDefaultProvider();
+        
+        if (!this.isInitialized || !this.factoryContract) {
+          throw new Error("Contract not initialized and failed to initialize with default provider.");
+        }
       }
       
       const battleMetas = await this.factoryContract.getWaitingBattles();
@@ -634,7 +735,12 @@ export class BattleFactoryService {
   async getActiveBattles(): Promise<{ success: boolean; battleMetas?: BattleMeta[]; message?: string }> {
     try {
       if (!this.isInitialized || !this.factoryContract) {
-        throw new Error("Contract not initialized. Please connect wallet first.");
+        // 초기화되지 않았으면 기본 프로바이더로 초기화 시도
+        this.initializeWithDefaultProvider();
+        
+        if (!this.isInitialized || !this.factoryContract) {
+          throw new Error("Contract not initialized and failed to initialize with default provider.");
+        }
       }
       
       const battleMetas = await this.factoryContract.getActiveBattles();

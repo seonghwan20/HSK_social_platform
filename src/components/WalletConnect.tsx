@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useBattleLogic } from '../hooks/useBattleLogic';
 
 export default function WalletConnect() {
-  const { account, isConnected, connectWallet, disconnectWallet } = useBattleLogic();
+  const { account, isConnected, connectWallet, disconnectWallet, balance } = useBattleLogic();
   const [displayBalance, setDisplayBalance] = useState("0.0000");
   const [showDisconnectWarning, setShowDisconnectWarning] = useState(false);
   const [networkName, setNetworkName] = useState("");
@@ -48,53 +48,48 @@ export default function WalletConnect() {
     }
   };
 
-  // 🟡 자동 전환 유도
+  // 💰 지갑 연결 시 정보 가져오기
   useEffect(() => {
-    if (isConnected && !isHashKeyNetwork) {
-      switchToHashKeyTestnet();
+    if (isConnected && account) {
+      getWalletInfo();
     }
-  }, [isConnected, isHashKeyNetwork]);
+  }, [isConnected, account, balance]);
 
-  // 🔄 네트워크 변경 감지 시 새로고침
+  // 💰 잔액 및 네트워크 정보 가져오기 함수
+  const getWalletInfo = async () => {
+    if (typeof window !== 'undefined' && (window as any).ethereum && isConnected && account) {
+      try {
+        // hook에서 제공하는 balance 사용
+        setDisplayBalance(balance);
+
+        // 네트워크 정보만 확인
+        const chainId = await (window as any).ethereum.request({ method: 'eth_chainId' });
+        const isHashKey = chainId === HASHKEY_CHAIN_ID;
+        setIsHashKeyNetwork(isHashKey);
+        setNetworkName(isHashKey ? 'HashKey Testnet' : `Chain ID: ${chainId}`);
+      } catch (error) {
+        console.error("지갑 정보 조회 오류:", error);
+        setNetworkName("Unknown");
+        setIsHashKeyNetwork(false);
+      }
+    }
+  };
+
+  // 🔄 네트워크 변경 감지 시 정보 업데이트만
   useEffect(() => {
     if (typeof window !== 'undefined' && (window as any).ethereum) {
-      const handleChainChanged = () => {
-        window.location.reload();
+      const handleChainChanged = (chainId: string) => {
+        console.log("체인 변경 감지:", chainId);
+        getWalletInfo();
       };
+      
       (window as any).ethereum.on('chainChanged', handleChainChanged);
+      
       return () => {
         (window as any).ethereum.removeListener('chainChanged', handleChainChanged);
       };
     }
-  }, []);
-
-  // 💰 잔액 및 네트워크 이름
-  useEffect(() => {
-    const getWalletInfo = async () => {
-      if (typeof window !== 'undefined' && (window as any).ethereum && isConnected && account) {
-        try {
-          const balance = await (window as any).ethereum.request({
-            method: 'eth_getBalance',
-            params: [account, 'latest']
-          });
-          const ethBalance = parseInt(balance, 16) / 1e18;
-          setDisplayBalance(ethBalance.toFixed(4));
-
-          const chainId = await (window as any).ethereum.request({ method: 'eth_chainId' });
-          const isHashKey = chainId === HASHKEY_CHAIN_ID;
-          setIsHashKeyNetwork(isHashKey);
-          setNetworkName(isHashKey ? 'HashKey Testnet' : `Chain ID: ${chainId}`);
-          console.log('Chain ID:', chainId);
-        } catch (error) {
-          console.error("Wallet info error:", error);
-          setDisplayBalance("0.0000");
-          setNetworkName("Unknown");
-          setIsHashKeyNetwork(false);
-        }
-      }
-    };
-    getWalletInfo();
-  }, [account, isConnected]);
+  }, [isConnected, account]);
 
   return (
     <div className="wallet-connect relative">

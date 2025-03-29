@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
+import { formatEther } from '../utils/ethers';
 
 export function useWallet() {
   const [account, setAccount] = useState('');
@@ -26,9 +27,10 @@ export function useWallet() {
   }, []);
   
   // Handle chain changes
-  const handleChainChanged = useCallback(() => {
-    // We'll check the network after reload
-    window.location.reload();
+  const handleChainChanged = useCallback((chainId: string) => {
+    console.log("체인 변경 감지:", chainId);
+    // 체인 ID가 변경되었을 때 새로 고침하지 않고 네트워크만 확인
+    checkNetwork();
   }, []);
   
   // Set up ethereum event listeners
@@ -132,7 +134,9 @@ export function useWallet() {
       }
       
       // Since we switched networks, we need to update our provider
-      const web3Provider = new ethers.BrowserProvider(window.ethereum);
+      const web3Provider = new ethers.BrowserProvider(window.ethereum, {
+        ensAddress: undefined // ENS 비활성화
+      });
       setProvider(web3Provider);
       
       // Check if we switched successfully
@@ -148,13 +152,16 @@ export function useWallet() {
     try {
       if (provider && account) {
         const rawBalance = await provider.getBalance(account);
-        const formattedBalance = ethers.formatEther(rawBalance);
-        // Format to 4 decimal places
-        setBalance(parseFloat(formattedBalance).toFixed(4));
+        
+        // 커스텀 formatEther 함수를 사용하여 gwei 단위로 포맷팅
+        const formattedBalance = formatEther(rawBalance);
+        
+        // 포맷된 값 그대로 사용 (이미 적절히 반올림되어 있음)
+        setBalance(formattedBalance);
       }
     } catch (error) {
       console.error("Failed to fetch balance:", error);
-      setBalance('0.0000');
+      setBalance('0');
     }
   };
   
@@ -162,7 +169,9 @@ export function useWallet() {
     if (window.ethereum) {
       try {
         // This will detect if MetaMask is already connected
-        const web3Provider = new ethers.BrowserProvider(window.ethereum);
+        const web3Provider = new ethers.BrowserProvider(window.ethereum, {
+          ensAddress: undefined // ENS 비활성화
+        });
         const accounts = await web3Provider.listAccounts();
         
         if (accounts.length > 0) {
@@ -195,7 +204,9 @@ export function useWallet() {
           method: 'eth_requestAccounts' 
         });
         
-        const web3Provider = new ethers.BrowserProvider(window.ethereum);
+        const web3Provider = new ethers.BrowserProvider(window.ethereum, {
+          ensAddress: undefined // ENS 비활성화
+        });
         
         if (accounts.length > 0) {
           setAccount(accounts[0]);

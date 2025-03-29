@@ -1,174 +1,259 @@
 "use client";
-
+import { createContext, useContext, useMemo } from 'react';
 import React from "react";
 import Image from "next/image";
 import Header from "../components/Header";
 import { useBattleLogic } from "../hooks/useBattleLogic";
 import { Battle, CommitteeQuiz, QuizAnswer } from "../hooks/useBattleLogic";
+import WalletConnect from "../components/WalletConnect";
+import { toast } from 'react-hot-toast';
 
-export default function Home() {
-  // Use the battleLogic hook to get all functionality
+// BattleLogicContext 생성
+const BattleLogicContext = createContext<ReturnType<typeof useBattleLogic> | null>(null);
+
+// BattleLogicProvider 컴포넌트 최적화 - 한 번만 렌더링되도록 함
+const BattleLogicProvider = React.memo(({ children }: { children: React.ReactNode }) => {
+  // useBattleLogic 훅의 결과를 메모이제이션 - 재계산 방지
+  const battleLogic = useBattleLogic();
+  
+  // Context 값도 메모이제이션 - 불필요한 재렌더링 방지
+  const contextValue = useMemo(() => battleLogic, [battleLogic]);
+  
+  console.log("BattleLogicProvider 렌더링");
+  
+  return (
+    <BattleLogicContext.Provider value={contextValue}>
+      {children}
+    </BattleLogicContext.Provider>
+  );
+});  // React.memo 닫는 괄호 추가
+
+// 컴포넌트 displayName 설정
+BattleLogicProvider.displayName = 'BattleLogicProvider';
+
+// 커스텀 훅 생성
+export function useBattleLogicContext() {
+  const context = useContext(BattleLogicContext);
+  if (!context) {
+    throw new Error('useBattleLogicContext는 BattleLogicProvider 내부에서만 사용할 수 있습니다.');
+  }
+  return context;
+}
+
+// 원래 Home 컴포넌트를 순수 컴포넌트로 분리 - React.memo로 최적화
+const HomeContent = React.memo(function HomeContent() {
   const {
-    // States
     account,
     provider,
     isConnected,
+    connectWallet,
     featuredBattle,
     hotBattles,
     waitingBattles,
     myBattles,
     newBattle,
+    handleInputChange,
+    handleQuizChange,
+    handleQuizAnswerChange,
+    handleFileUpload,
+    setNewBattle,
+    handleOpenChallenge,
+    handleChallengerQuizChange,
+    handleChallengerQuizAnswerChange,
+    handleViewBattleDetails,
+    handleAcceptChallenge,
+    handleCreateBattle,
+    handleJoinCommittee,
+    selectedBattleDetails,
     selectedChallenge,
     challengeResponse,
     responsePhoto,
+    setChallengeResponse,
+    setResponsePhoto,
+    isLoadingBattles,
+    showSideBetOptions,
+    setShowSideBetOptions,
+    player1Odds,
+    player2Odds,
+    player1BetAmount,
+    player2BetAmount,
+    setPlayer1BetAmount,
+    setPlayer2BetAmount,
+    handlePlaceSideBet,
     challengerQuizzes,
     challengerQuizAnswers,
-    selectedBattleDetails,
-    showSideBetOptions,
     isCommitteeMode,
     committeeQuizzes,
     currentQuizIndex,
     quizTimer,
     timerActive,
     selectedAnswer,
+    handleSelectAnswer,
     committeeAnswers,
     showVotingPopup,
     selectedVote,
-    allAnswersCorrect,
-    
-    // Functions
-    connectWallet,
-    handleFileUpload,
-    handleViewBattleDetails,
-    handleJoinCommittee,
-    handleSelectAnswer,
     handleSelectVote,
     handleSubmitVote,
-    handleInputChange,
-    handleQuizChange,
-    handleQuizAnswerChange,
-    handleChallengerQuizAnswerChange,
-    handleCreateBattle,
-    handleOpenChallenge,
-    handleChallengerQuizChange,
-    handleAcceptChallenge,
-    setShowSideBetOptions,
-    setNewBattle,
-    setChallengeResponse,
-    setResponsePhoto
-  } = useBattleLogic();
+    allAnswersCorrect,
+    refreshOdds,
+    loadBattleData,
+    setIsLoadingBattles
+  } = useBattleLogicContext();
   
-  // All wallet connection logic is now handled by useBattleLogic()
+  console.log("HomeContent 컴포넌트 렌더링");
   
-  // All helper functions and handlers are now provided by useBattleLogic()
-
+  // 데이터 강제 새로고침 함수 - 로딩 상태가 멈춘 경우에도 동작하도록 함
+  const forceRefreshData = React.useCallback(() => {
+    console.log("데이터 강제 새로고침 시도");
+    
+    // 이미 로딩 중이라면 로딩 상태 초기화 후 재시도
+    if (isLoadingBattles) {
+      console.log("로딩 상태 초기화 후 재시도");
+      setIsLoadingBattles(false);
+      
+      // 0.5초 후 다시 로드 시도
+      setTimeout(() => {
+        console.log("데이터 로딩 재시도");
+        loadBattleData().catch(err => {
+          console.error("데이터 로딩 재시도 실패:", err);
+          toast.error("데이터 로딩에 실패했습니다. 다시 시도해 주세요.");
+        });
+      }, 500);
+    } else {
+      // 로딩 중이 아니라면 바로 로드
+      console.log("즉시 데이터 로딩 시작");
+      loadBattleData().catch(err => {
+        console.error("데이터 로딩 실패:", err);
+        toast.error("데이터 로딩에 실패했습니다. 다시 시도해 주세요.");
+      });
+    }
+  }, [isLoadingBattles, loadBattleData, setIsLoadingBattles]);
+  
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white pt-16 pb-4 px-4">
       {/* Using the Header component */}
       <Header />
       
       <main className="container mx-auto max-w-7xl">
+        {/* 데이터 새로고침 안내 메시지 */}
+        {isLoadingBattles && (
+          <div className="flex justify-center items-center py-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
+            <span className="ml-2 text-indigo-400">데이터 로딩 중...</span>
+          </div>
+        )}
+        
         {/* Featured Battle Section */}
         <section className="mb-12 mt-4">
-          <div className="relative rounded-xl overflow-hidden bg-gradient-to-r from-purple-900 via-blue-800 to-indigo-900 shadow-2xl">
-            <div className="relative z-20 p-8 md:p-10 flex flex-col md:flex-row">
-              <div className="w-full md:w-1/2 mb-8 md:mb-0">
-                <span className="bg-red-500 text-xs px-2 py-1 rounded-full uppercase font-bold tracking-wider">Featured Battle</span>
-                <h2 className="text-3xl md:text-4xl font-bold mt-4 mb-3">{featuredBattle.title}</h2>
-                
-                <div className="space-y-6 mt-6">
-                  {/* Option A */}
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="font-medium">{featuredBattle.optionA}</span>
-                      <span className="text-blue-300">60%</span>
+          {featuredBattle ? (
+            <div className="relative rounded-xl overflow-hidden bg-gradient-to-r from-purple-900 via-blue-800 to-indigo-900 shadow-2xl">
+              <div className="relative z-20 p-8 md:p-10 flex flex-col md:flex-row">
+                <div className="w-full md:w-1/2 mb-8 md:mb-0">
+                  <span className="bg-red-500 text-xs px-2 py-1 rounded-full uppercase font-bold tracking-wider">Featured Battle</span>
+                  <h2 className="text-3xl md:text-4xl font-bold mt-4 mb-3">{featuredBattle.title}</h2>
+                  
+                  <div className="space-y-6 mt-6">
+                    {/* Option A */}
+                    <div>
+                      <div className="flex justify-between mb-1">
+                        <span className="font-medium">{featuredBattle.optionA}</span>
+                        <span className="text-blue-300">60%</span>
+                      </div>
+                      <div className="h-4 w-full bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-600 rounded-full" style={{width: '60%'}}></div>
+                      </div>
                     </div>
-                    <div className="h-4 w-full bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-600 rounded-full" style={{width: '60%'}}></div>
+                    
+                    {/* Option B */}
+                    <div>
+                      <div className="flex justify-between mb-1">
+                        <span className="font-medium">{featuredBattle.optionB}</span>
+                        <span className="text-red-300">40%</span>
+                      </div>
+                      <div className="h-4 w-full bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-red-600 rounded-full" style={{width: '40%'}}></div>
+                      </div>
                     </div>
                   </div>
                   
-                  {/* Option B */}
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="font-medium">{featuredBattle.optionB}</span>
-                      <span className="text-red-300">40%</span>
+                  <div className="flex flex-wrap gap-2 mt-6 text-sm">
+                    <div className="bg-gray-800/60 rounded-lg px-3 py-2">
+                      <span className="text-gray-300">Bet Amount: </span>
+                      <span className="font-bold">{featuredBattle.betAmount} HSK</span>
                     </div>
-                    <div className="h-4 w-full bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-red-600 rounded-full" style={{width: '40%'}}></div>
+                    <div className="bg-gray-800/60 rounded-lg px-3 py-2">
+                      <span className="text-gray-300">Participants: </span>
+                      <span className="font-bold">{featuredBattle.participants}</span>
                     </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-wrap gap-2 mt-6 text-sm">
-                  <div className="bg-gray-800/60 rounded-lg px-3 py-2">
-                    <span className="text-gray-300">Bet Amount: </span>
-                    <span className="font-bold">{featuredBattle.betAmount} ETH</span>
-                  </div>
-                  <div className="bg-gray-800/60 rounded-lg px-3 py-2">
-                    <span className="text-gray-300">Participants: </span>
-                    <span className="font-bold">{featuredBattle.participants}</span>
-                  </div>
-                  <div className="bg-gray-800/60 rounded-lg px-3 py-2">
-                    <span className="text-gray-300">Time Left: </span>
-                    <span className="font-bold">2d 14h</span>
-                  </div>
-                </div>
-                
-                <div className="flex flex-wrap gap-3 mt-6">
-                  <button className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white px-6 py-3 rounded-lg font-medium shadow-lg">
-                    Join Battle
-                  </button>
-                  <button 
-                    onClick={() => handleViewBattleDetails(featuredBattle)}
-                    className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-medium shadow-lg flex items-center gap-2"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.5 4.5a.5.5 0 0 1 0 1h-1a.5.5 0 0 1 0-1h1zm0 2.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 1 .5-.5z"/>
-                    </svg>
-                    Details
-                  </button>
-                  <button className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium shadow-lg flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M13.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.499 2.499 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/>
-                    </svg>
-                    Share
-                  </button>
-                </div>
-              </div>
-              
-              <div className="w-full md:w-1/2 md:pl-8 flex items-center justify-center">
-                <div className="bg-black/30 p-6 rounded-lg w-full">
-                  <div className="flex justify-between items-center mb-4">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center font-bold">A</div>
-                      <span className="ml-2 font-medium">{featuredBattle.optionA}</span>
-                    </div>
-                    <span className="text-2xl">VS</span>
-                    <div className="flex items-center">
-                      <span className="mr-2 font-medium">{featuredBattle.optionB}</span>
-                      <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center font-bold">B</div>
+                    <div className="bg-gray-800/60 rounded-lg px-3 py-2">
+                      <span className="text-gray-300">Time Left: </span>
+                      <span className="font-bold">2d 14h</span>
                     </div>
                   </div>
                   
-                  <p className="text-center text-gray-300 my-4">
-                    This battle has been viewed by over 12,500 people and has 3,280 votes so far! Join now to participate.
-                  </p>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-blue-900/40 p-3 rounded-lg text-center">
-                      <div className="text-3xl font-bold text-blue-300">742</div>
-                      <div className="text-xs text-gray-300">Votes for {featuredBattle.optionA}</div>
+                  <div className="flex flex-wrap gap-3 mt-6">
+                    <button className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white px-6 py-3 rounded-lg font-medium shadow-lg">
+                      Join Battle
+                    </button>
+                    <button 
+                      onClick={() => handleViewBattleDetails(featuredBattle)}
+                      className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-medium shadow-lg flex items-center gap-2"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.5 4.5a.5.5 0 0 1 0 1h-1a.5.5 0 0 1 0-1h1zm0 2.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 1 .5-.5z"/>
+                      </svg>
+                      Details
+                    </button>
+                    <button className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium shadow-lg flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M13.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.499 2.499 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/>
+                      </svg>
+                      Share
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="w-full md:w-1/2 md:pl-8 flex items-center justify-center">
+                  <div className="bg-black/30 p-6 rounded-lg w-full">
+                    <div className="flex justify-between items-center mb-4">
+                      <div className="flex items-center">
+                        <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center font-bold">A</div>
+                        <span className="ml-2 font-medium">{featuredBattle.optionA}</span>
+                      </div>
+                      <span className="text-2xl">VS</span>
+                      <div className="flex items-center">
+                        <span className="mr-2 font-medium">{featuredBattle.optionB}</span>
+                        <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center font-bold">B</div>
+                      </div>
                     </div>
-                    <div className="bg-red-900/40 p-3 rounded-lg text-center">
-                      <div className="text-3xl font-bold text-red-300">498</div>
-                      <div className="text-xs text-gray-300">Votes for {featuredBattle.optionB}</div>
+                    
+                    <p className="text-center text-gray-300 my-4">
+                      This battle has been viewed by over 12,500 people and has 3,280 votes so far! Join now to participate.
+                    </p>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-blue-900/40 p-3 rounded-lg text-center">
+                        <div className="text-3xl font-bold text-blue-300">742</div>
+                        <div className="text-xs text-gray-300">Votes for {featuredBattle.optionA}</div>
+                      </div>
+                      <div className="bg-red-900/40 p-3 rounded-lg text-center">
+                        <div className="text-3xl font-bold text-red-300">498</div>
+                        <div className="text-xs text-gray-300">Votes for {featuredBattle.optionB}</div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="p-8 text-center bg-gradient-to-r from-gray-800 to-gray-900 rounded-xl">
+              <div className="flex justify-center items-center py-8">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+                <span className="ml-3 text-lg text-indigo-400">배틀 데이터 로딩 중...</span>
+              </div>
+              <p className="text-gray-400 mt-4">곧 최신 배틀이 표시됩니다. 잠시만 기다려주세요.</p>
+            </div>
+          )}
         </section>
         
         {/* Trending Categories */}
@@ -198,12 +283,12 @@ export default function Home() {
           </div>
         </section>
         
-        {/* Waiting for Opponents Section */}
+        {/* Waiting for Challengers Section */}
         <section className="mb-12">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold">
               <span className="mr-2">⏳</span>
-              Waiting for Opponents
+              Waiting for Challengers
             </h2>
             <button className="text-sm text-blue-400 hover:text-blue-300 flex items-center">
               <span>See All</span>
@@ -212,64 +297,75 @@ export default function Home() {
               </svg>
             </button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {waitingBattles.map((battle) => (
-              <div key={battle.id} className="bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl p-5 hover:from-gray-700 hover:to-gray-800 transition shadow-lg border border-yellow-800/30">
-                <div className="mb-4">
-                  <span className="inline-block bg-yellow-900/60 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-medium">Awaiting Challenger</span>
-                </div>
-                <h3 className="font-bold text-lg mb-3">{battle.title}</h3>
-                
-                <div className="space-y-3 mb-4">
-                  {/* Option A */}
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>{battle.optionA}</span>
-                      <span className="text-yellow-300">Creator</span>
+          {isLoadingBattles ? (
+            <div className="flex justify-center items-center py-8">
+              <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-yellow-500"></div>
+              <span className="ml-3 text-yellow-400">대기 중인 배틀 로딩 중...</span>
+            </div>
+          ) : waitingBattles && waitingBattles.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {waitingBattles.map((battle) => (
+                <div key={battle.id} className="bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl p-5 hover:from-gray-700 hover:to-gray-800 transition shadow-lg border border-yellow-800/30">
+                  <div className="mb-4">
+                    <span className="inline-block bg-yellow-900/60 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-medium">Awaiting Challenger</span>
+                  </div>
+                  <h3 className="font-bold text-lg mb-3">{battle.title}</h3>
+                  
+                  <div className="space-y-3 mb-4">
+                    {/* Option A */}
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>{battle.optionA}</span>
+                        <span className="text-yellow-300">Creator</span>
+                      </div>
+                      <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-yellow-600 rounded-full" style={{width: '100%'}}></div>
+                      </div>
                     </div>
-                    <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-yellow-600 rounded-full" style={{width: '100%'}}></div>
+                    
+                    {/* Option B */}
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>{battle.optionB}</span>
+                        <span className="text-gray-400">Join Now!</span>
+                      </div>
+                      <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-gray-600 rounded-full" style={{width: '0%'}}></div>
+                      </div>
                     </div>
                   </div>
                   
-                  {/* Option B */}
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>{battle.optionB}</span>
-                      <span className="text-gray-400">Join Now!</span>
+                  <div className="flex justify-between text-xs text-gray-400 mb-4">
+                    <div>
+                      <span>Bet Amount:</span>
+                      <span className="text-white ml-1">{battle.betAmount} HSK</span>
                     </div>
-                    <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-gray-600 rounded-full" style={{width: '0%'}}></div>
+                    <div>
+                      <span>Status:</span>
+                      <span className="text-yellow-400 ml-1">Waiting</span>
                     </div>
                   </div>
-                </div>
-                
-                <div className="flex justify-between text-xs text-gray-400 mb-4">
-                  <div>
-                    <span>Bet Amount:</span>
-                    <span className="text-white ml-1">{battle.betAmount} ETH</span>
+                  
+                  <div className="flex space-x-2">
+                    <button 
+                      onClick={() => handleOpenChallenge(battle)}
+                      className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-sm flex-1 font-medium flex justify-center items-center gap-1"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                        <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                      </svg>
+                      <span>Accept Challenge</span>
+                    </button>
                   </div>
-                  <div>
-                    <span>Status:</span>
-                    <span className="text-yellow-400 ml-1">Waiting</span>
-                  </div>
                 </div>
-                
-                <div className="flex space-x-2">
-                  <button 
-                    onClick={() => handleOpenChallenge(battle)}
-                    className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-sm flex-1 font-medium flex justify-center items-center gap-1"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                      <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-                    </svg>
-                    <span>Accept Challenge</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-gray-800 rounded-xl p-6 text-center">
+              <p className="text-gray-400">현재 대기 중인 배틀이 없습니다. 새로운 배틀을 생성해보세요!</p>
+            </div>
+          )}
         </section>
         
         {/* Popular Battles Section */}
@@ -286,64 +382,75 @@ export default function Home() {
               </svg>
             </button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {hotBattles.map((battle) => (
-              <div key={battle.id} className="bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl p-5 hover:from-gray-700 hover:to-gray-800 transition shadow-lg">
-                <div className="mb-4">
-                  <span className="inline-block bg-indigo-900/60 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-medium">Sports</span>
-                </div>
-                <h3 className="font-bold text-lg mb-3">{battle.title}</h3>
-                
-                <div className="space-y-3 mb-4">
-                  {/* Option A */}
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>{battle.optionA}</span>
-                      <span className="text-blue-300">55%</span>
+          {isLoadingBattles ? (
+            <div className="flex justify-center items-center py-8">
+              <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-indigo-500"></div>
+              <span className="ml-3 text-indigo-400">인기 배틀 로딩 중...</span>
+            </div>
+          ) : hotBattles && hotBattles.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {hotBattles.map((battle) => (
+                <div key={battle.id} className="bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl p-5 hover:from-gray-700 hover:to-gray-800 transition shadow-lg">
+                  <div className="mb-4">
+                    <span className="inline-block bg-indigo-900/60 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-medium">Sports</span>
+                  </div>
+                  <h3 className="font-bold text-lg mb-3">{battle.title}</h3>
+                  
+                  <div className="space-y-3 mb-4">
+                    {/* Option A */}
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>{battle.optionA}</span>
+                        <span className="text-blue-300">55%</span>
+                      </div>
+                      <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-600 rounded-full" style={{width: '55%'}}></div>
+                      </div>
                     </div>
-                    <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-600 rounded-full" style={{width: '55%'}}></div>
+                    
+                    {/* Option B */}
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>{battle.optionB}</span>
+                        <span className="text-red-300">45%</span>
+                      </div>
+                      <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-red-600 rounded-full" style={{width: '45%'}}></div>
+                      </div>
                     </div>
                   </div>
                   
-                  {/* Option B */}
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>{battle.optionB}</span>
-                      <span className="text-red-300">45%</span>
+                  <div className="flex justify-between text-xs text-gray-400 mb-4">
+                    <div>
+                      <span>Bet Amount:</span>
+                      <span className="text-white ml-1">{battle.betAmount} HSK</span>
                     </div>
-                    <div className="h-2 w-full bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-red-600 rounded-full" style={{width: '45%'}}></div>
+                    <div>
+                      <span>Votes:</span>
+                      <span className="text-white ml-1">{battle.participants}</span>
                     </div>
                   </div>
-                </div>
-                
-                <div className="flex justify-between text-xs text-gray-400 mb-4">
-                  <div>
-                    <span>Bet Amount:</span>
-                    <span className="text-white ml-1">{battle.betAmount} ETH</span>
+                  
+                  <div className="flex space-x-2">
+                    <button 
+                      onClick={() => handleViewBattleDetails(battle)}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm flex-1 font-medium flex justify-center items-center gap-1"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
+                        <path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/>
+                      </svg>
+                      <span>View Battle</span>
+                    </button>
                   </div>
-                  <div>
-                    <span>Votes:</span>
-                    <span className="text-white ml-1">{battle.participants}</span>
-                  </div>
                 </div>
-                
-                <div className="flex space-x-2">
-                  <button 
-                    onClick={() => handleViewBattleDetails(battle)}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm flex-1 font-medium flex justify-center items-center gap-1"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
-                      <path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/>
-                    </svg>
-                    <span>View Battle</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-gray-800 rounded-xl p-6 text-center">
+              <p className="text-gray-400">현재 인기 배틀이 없습니다. 새로운 배틀을 생성해보세요!</p>
+            </div>
+          )}
         </section>
         
         {/* Create New Battle Button */}
@@ -388,64 +495,79 @@ export default function Home() {
               </svg>
             </button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {myBattles.map((battle) => (
-              <div key={battle.id} className="bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl p-5 hover:from-gray-700 hover:to-gray-800 transition shadow-lg border border-indigo-800/30">
-                <div className="mb-4">
-                  <span className="inline-block bg-green-800/60 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-medium">Participating</span>
-                </div>
-                <h3 className="font-bold text-lg mb-3">{battle.title}</h3>
-                
-                <div className="space-y-3 mb-4">
-                  {/* Option A */}
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className={battle.myChoice === 'optionA' ? 'text-green-400 font-bold' : ''}>{battle.optionA}</span>
-                      <span className="text-blue-300">65%</span>
+          {isLoadingBattles ? (
+            <div className="flex justify-center items-center py-8">
+              <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-green-500"></div>
+              <span className="ml-3 text-green-400">내 배틀 로딩 중...</span>
+            </div>
+          ) : myBattles && myBattles.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {myBattles.map((battle) => (
+                <div key={battle.id} className="bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl p-5 hover:from-gray-700 hover:to-gray-800 transition shadow-lg border border-indigo-800/30">
+                  <div className="mb-4">
+                    <span className="inline-block bg-green-800/60 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-medium">Participating</span>
+                  </div>
+                  <h3 className="font-bold text-lg mb-3">{battle.title}</h3>
+                  
+                  <div className="space-y-3 mb-4">
+                    {/* Option A */}
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className={battle.myChoice === 'optionA' ? 'text-green-400 font-bold' : ''}>{battle.optionA}</span>
+                        <span className="text-blue-300">65%</span>
+                      </div>
+                      <div className={`h-2 w-full ${battle.myChoice === 'optionA' ? 'bg-green-900/40' : 'bg-gray-700'} rounded-full overflow-hidden`}>
+                        <div className={`h-full ${battle.myChoice === 'optionA' ? 'bg-green-500' : 'bg-blue-600'} rounded-full`} style={{width: '65%'}}></div>
+                      </div>
                     </div>
-                    <div className={`h-2 w-full ${battle.myChoice === 'optionA' ? 'bg-green-900/40' : 'bg-gray-700'} rounded-full overflow-hidden`}>
-                      <div className={`h-full ${battle.myChoice === 'optionA' ? 'bg-green-500' : 'bg-blue-600'} rounded-full`} style={{width: '65%'}}></div>
+                    
+                    {/* Option B */}
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className={battle.myChoice === 'optionB' ? 'text-green-400 font-bold' : ''}>{battle.optionB}</span>
+                        <span className="text-red-300">35%</span>
+                      </div>
+                      <div className={`h-2 w-full ${battle.myChoice === 'optionB' ? 'bg-green-900/40' : 'bg-gray-700'} rounded-full overflow-hidden`}>
+                        <div className={`h-full ${battle.myChoice === 'optionB' ? 'bg-green-500' : 'bg-red-600'} rounded-full`} style={{width: '35%'}}></div>
+                      </div>
                     </div>
                   </div>
                   
-                  {/* Option B */}
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className={battle.myChoice === 'optionB' ? 'text-green-400 font-bold' : ''}>{battle.optionB}</span>
-                      <span className="text-red-300">35%</span>
+                  <div className="flex justify-between text-xs text-gray-400 mb-4">
+                    <div>
+                      <span>My Choice:</span>
+                      <span className="text-green-400 ml-1">{battle.myChoice === 'optionA' ? battle.optionA : battle.optionB}</span>
                     </div>
-                    <div className={`h-2 w-full ${battle.myChoice === 'optionB' ? 'bg-green-900/40' : 'bg-gray-700'} rounded-full overflow-hidden`}>
-                      <div className={`h-full ${battle.myChoice === 'optionB' ? 'bg-green-500' : 'bg-red-600'} rounded-full`} style={{width: '35%'}}></div>
+                    <div>
+                      <span>Bet:</span>
+                      <span className="text-white ml-1">{battle.betAmount} HSK</span>
                     </div>
                   </div>
-                </div>
-                
-                <div className="flex justify-between text-xs text-gray-400 mb-4">
-                  <div>
-                    <span>My Choice:</span>
-                    <span className="text-green-400 ml-1">{battle.myChoice === 'optionA' ? battle.optionA : battle.optionB}</span>
+                  
+                  <div className="flex space-x-2">
+                    <button 
+                      onClick={() => handleViewBattleDetails(battle)}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm flex-1 font-medium flex justify-center items-center gap-1"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
+                        <path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/>
+                      </svg>
+                      <span>View Battle</span>
+                    </button>
                   </div>
-                  <div>
-                    <span>Bet:</span>
-                    <span className="text-white ml-1">{battle.betAmount} ETH</span>
-                  </div>
                 </div>
-                
-                <div className="flex space-x-2">
-                  <button 
-                    onClick={() => handleViewBattleDetails(battle)}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm flex-1 font-medium flex justify-center items-center gap-1"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
-                      <path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/>
-                    </svg>
-                    <span>View Battle</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-        </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-gray-800 rounded-xl p-6 text-center">
+              {isConnected ? (
+                <p className="text-gray-400">아직 참여한 배틀이 없습니다. 배틀을 생성하거나 참여해보세요!</p>
+              ) : (
+                <p className="text-gray-400">내 배틀을 보려면 지갑을 연결해주세요.</p>
+              )}
+            </div>
+          )}
         </section>
       </main>
       
@@ -495,7 +617,7 @@ export default function Home() {
             
             {/* 베팅 금액 입력 */}
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Bet Amount (KRW)</label>
+              <label className="block text-sm text-gray-400 mb-1">Bet Amount (HSK)</label>
               <input 
                 type="text" 
                 name="betAmount"
@@ -618,12 +740,12 @@ export default function Home() {
                     waiting: true
                   };
                   
-                  // Clean up betAmount for ETH conversion and make sure waiting is set to true
+                  // Clean up betAmount for HSK conversion and make sure waiting is set to true
                   const betAmount = hardcodedBattle.betAmount.replace(/,/g, '');
                   
                   const completeBattle = {
                     ...hardcodedBattle,
-                    betAmount: betAmount, // Clean betAmount for ETH conversion
+                    betAmount: betAmount, // Clean betAmount for HSK conversion
                     waiting: true
                   };
                   
@@ -682,7 +804,7 @@ export default function Home() {
                 <h4 className="font-bold mb-1">{selectedChallenge.title}</h4>
                 <div className="flex justify-between text-sm">
                   <span>Creator's Position: {selectedChallenge.optionA}</span>
-                  <span>Bet: {selectedChallenge.betAmount} KRW</span>
+                  <span>Bet: {selectedChallenge.betAmount} HSK</span>
                 </div>
               </div>
               
@@ -765,7 +887,7 @@ export default function Home() {
                 </p>
                 <div className="flex items-center justify-between text-sm">
                   <span>Required Deposit:</span>
-                  <span className="font-bold">{selectedChallenge.betAmount} KRW</span>
+                  <span className="font-bold">{selectedChallenge.betAmount} HSK</span>
                 </div>
               </div>
               
@@ -876,7 +998,7 @@ export default function Home() {
               {/* Battle Stats */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 my-8">
                 <div className="bg-gray-800/80 p-4 rounded-xl text-center">
-                  <div className="text-2xl font-bold">{selectedBattleDetails.betAmount} ETH</div>
+                  <div className="text-2xl font-bold">{selectedBattleDetails.betAmount} HSK</div>
                   <div className="text-xs text-gray-400 mt-1">Battle Prize</div>
                 </div>
                 {selectedBattleDetails.participants && (
@@ -944,17 +1066,8 @@ export default function Home() {
                 </button>
                 
                 <button 
-                  className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.5 7.5a.5.5 0 0 1 0 1H5.707l2.147 2.146a.5.5 0 0 1-.708.708l-3-3a.5.5 0 0 1 0-.708l3-3a.5.5 0 1 1 .708.708L5.707 7.5H11.5z"/>
-                  </svg>
-                  Join Battle
-                </button>
-                
-                <button 
                   onClick={() => setShowSideBetOptions(!showSideBetOptions)}
-                  className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
+                  className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2 md:col-span-2"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
                     <path d="M5.5 13v1.25c0 .138.112.25.25.25h1a.25.25 0 0 0 .25-.25V13h.5v1.25c0 .138.112.25.25.25h1a.25.25 0 0 0 .25-.25V13h.084c1.992 0 3.416-1.033 3.416-2.82 0-1.502-1.007-2.323-2.186-2.44v-.088c.97-.242 1.683-.974 1.683-2.19C11.997 3.93 10.847 3 9.092 3H9V1.75a.25.25 0 0 0-.25-.25h-1a.25.25 0 0 0-.25.25V3h-.573V1.75a.25.25 0 0 0-.25-.25H5.75a.25.25 0 0 0-.25.25V3l-1.998.011a.25.25 0 0 0-.25.25v.989c0 .137.11.25.248.25l.755-.005a.75.75 0 0 1 .745.75v5.505a.75.75 0 0 1-.75.75l-.748.011a.25.25 0 0 0-.25.25v1c0 .138.112.25.25.25L5.5 13zm1.427-8.513h1.719c.906 0 1.438.498 1.438 1.312 0 .871-.575 1.362-1.877 1.362h-1.28V4.487zm0 4.051h1.84c1.137 0 1.756.58 1.756 1.524 0 .953-.626 1.45-2.158 1.45H6.927V8.539z"/>
@@ -963,15 +1076,97 @@ export default function Home() {
                 </button>
                 
                 {showSideBetOptions && (
-                  <div className="md:col-span-3 grid grid-cols-2 gap-4 mt-3">
-                    <button className="bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center font-bold text-xs">A</div>
-                      <span>Bet on {selectedBattleDetails.optionA}</span>
-                    </button>
-                    <button className="bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-red-500 flex items-center justify-center font-bold text-xs">B</div>
-                      <span>Bet on {selectedBattleDetails.optionB}</span>
-                    </button>
+                  <div className="mt-6 bg-gray-800/50 p-6 rounded-xl border border-gray-700">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-lg font-medium text-gray-200">Side Betting</h4>
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm text-gray-400">Total Pool:</span>
+                        <span className="text-lg font-bold text-indigo-400">0.5 HSK</span>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {/* Option A */}
+                      <div className="bg-blue-900/20 p-4 rounded-lg border border-blue-800/30">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold">A</div>
+                            <span className="font-medium">{selectedBattleDetails.optionA}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-400">Odds:</span>
+                            <span className="text-lg font-bold text-blue-400">{player1Odds}x</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="number"
+                            value={player1BetAmount}
+                            onChange={(e) => setPlayer1BetAmount(e.target.value)}
+                            className="flex-1 bg-gray-700 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Enter bet amount (HSK)"
+                          />
+                          <button
+                            onClick={() => {
+                              if (selectedBattleDetails.sideBettingContract) {
+                                handlePlaceSideBet(
+                                  { ...selectedBattleDetails, sideBettingContract: selectedBattleDetails.sideBettingContract },
+                                  selectedBattleDetails.optionA,
+                                  player1BetAmount
+                                );
+                              }
+                            }}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                          >
+                            Place Bet
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {/* Option B */}
+                      <div className="bg-red-900/20 p-4 rounded-lg border border-red-800/30">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center font-bold">B</div>
+                            <span className="font-medium">{selectedBattleDetails.optionB}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-400">Odds:</span>
+                            <span className="text-lg font-bold text-red-400">{player2Odds}x</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="number"
+                            value={player2BetAmount}
+                            onChange={(e) => setPlayer2BetAmount(e.target.value)}
+                            className="flex-1 bg-gray-700 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                            placeholder="Enter bet amount (HSK)"
+                          />
+                          <button
+                            onClick={() => {
+                              if (selectedBattleDetails.sideBettingContract && selectedBattleDetails.optionB) {
+                                handlePlaceSideBet(
+                                  { ...selectedBattleDetails, sideBettingContract: selectedBattleDetails.sideBettingContract },
+                                  selectedBattleDetails.optionB,
+                                  player2BetAmount
+                                );
+                              }
+                            }}
+                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                          >
+                            Place Bet
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-4 pt-4 border-t border-gray-700">
+                      <div className="text-xs text-gray-400">
+                        <p>• 최소 베팅 금액: 0.01 HSK</p>
+                        <p>• 하우스 엣지: 2.5%</p>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1157,5 +1352,14 @@ export default function Home() {
         </div>
       )}
     </div>
+  );
+});  // React.memo 닫는 괄호 추가
+
+// 최상위 컴포넌트로 BattleLogicProvider 래핑
+export default function Home() {
+  return (
+    <BattleLogicProvider>
+      <HomeContent />
+    </BattleLogicProvider>
   );
 }

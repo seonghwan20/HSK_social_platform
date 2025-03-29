@@ -1,8 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ethers } from 'ethers';
 import { BattleStatus } from '@/services/contracts/types';
+import { SideBettingService } from '@/services/contracts/SideBettingService';
+import { toast } from 'react-hot-toast';
+import { BattleFactoryService } from '@/services/contracts/BattleFactoryService';
+import { FaucetService } from '@/services/contracts/FaucetService';
+import { formatEther, parseEther } from '../utils/ethers';
 
 // 타입 정의
 export interface Battle {
@@ -24,6 +29,8 @@ export interface Battle {
   thumbnail?: string;
   contractAddress?: string;
   contractType?: 'Faucet' | 'SideBetting';
+  sideBettingContract?: string;
+  status?: BattleStatus;
 }
 
 export interface CommitteeQuiz {
@@ -36,22 +43,156 @@ export interface QuizAnswer {
   quizIndex: number;
 }
 
+// 기본 프로바이더 URL 상수
+const DEFAULT_RPC_URL = 'https://hashkeychain-testnet.alt.technology';
+
+// 전역 변수 - 하드코딩된 기본 프로바이더 및 서비스
+let isGlobalInitialized = false;
+let globalDefaultProvider: ethers.BrowserProvider | null = null;
+let globalBattleFactoryService: BattleFactoryService | null = null;
+let globalSideBettingService: SideBettingService | null = null;
+let globalFaucetService: FaucetService | null = null;
+
+// 기본 프로바이더 초기화 함수 (브라우저 환경에 맞게 조정)
+const initializeDefaultProvider = () => {
+  if (globalDefaultProvider) {
+    console.log("🔷 이미 초기화된 기본 프로바이더 재사용");
+    return globalDefaultProvider;
+  }
+
+  try {
+    // 브라우저 환경에서만 실행
+    if (typeof window === 'undefined') {
+      console.error("브라우저 환경이 아닙니다.");
+      return null;
+    }
+    
+    console.log("🔷 기본 프로바이더 초기화 시작");
+    
+    // ethereum 객체 준비 (없으면 가상 객체 생성)
+    if (!window.ethereum) {
+      console.log("🔷 ethereum 객체를 생성합니다 - URL: https://hashkeychain-testnet.alt.technology");
+      
+      // 가상의 ethereum 객체 생성
+      window.ethereum = {
+        request: async ({ method, params }: any) => {
+          console.log(`기본 RPC 요청: ${method}`, params);
+          
+          // 기본 RPC 요청 구현
+          if (method === 'eth_chainId') {
+            return '0x85'; // HashKey Testnet chainId (133 in hex)
+          }
+          
+          // eth_accounts는 빈 배열 반환 (연결된 계정 없음)
+          if (method === 'eth_accounts') {
+            return [];
+          }
+          
+          // eth_requestAccounts는 오류 반환 (사용자 지갑 필요)
+          if (method === 'eth_requestAccounts') {
+            throw new Error("사용자 지갑이 필요한 작업입니다. 지갑을 연결해주세요.");
+          }
+          
+          // 다른 메서드들은 null 반환
+          return null;
+        },
+        on: (event: string, callback: any) => {
+          console.log(`이벤트 등록 (가상): ${event}`);
+          return window.ethereum;
+        },
+        removeListener: (event: string, callback: any) => {
+          console.log(`이벤트 제거 (가상): ${event}`);
+          return window.ethereum;
+        },
+        isMetaMask: false,
+        isConnected: () => false,
+        networkVersion: '133',
+        chainId: '0x85', // HashKey Testnet chainId
+      };
+    }
+    
+    // BrowserProvider 생성 시도
+    try {
+      console.log("🔷 BrowserProvider 생성 시도");
+      const provider = new ethers.BrowserProvider(window.ethereum, {
+        chainId: 133,
+        name: 'HashKey Testnet',
+        ensAddress: undefined
+      });
+      
+      // 기본 검증 - 네트워크 연결 확인
+      console.log("🔷 프로바이더 네트워크 검증 시도");
+      
+      // 최대 3번까지 재시도
+      let retryCount = 0;
+      const validateProvider = async (): Promise<ethers.BrowserProvider | null> => {
+        try {
+          // 네트워크에 연결되었는지 확인 (getBlockNumber는 가벼운 호출)
+          const blockNumber = await provider.getBlockNumber();
+          console.log(`🔷 네트워크 검증 성공: 현재 블록 번호 ${blockNumber}`);
+          return provider;
+        } catch (err) {
+          if (retryCount < 2) {
+            retryCount++;
+            console.warn(`🔷 네트워크 검증 실패, ${retryCount}/2 재시도 중...`);
+            await new Promise(r => setTimeout(r, 1000)); // 1초 대기
+            return validateProvider();
+          }
+          console.error("🔷 네트워크 검증 최종 실패, 기본 프로바이더 생성 실패");
+          throw err;
+        }
+      };
+      
+      // 전역 서비스 초기화는 검증 후 설정
+      return validateProvider().then(validProvider => {
+        if (validProvider) {
+          globalDefaultProvider = validProvider;
+          globalBattleFactoryService = new BattleFactoryService(validProvider);
+          globalSideBettingService = new SideBettingService(validProvider);
+          globalFaucetService = new FaucetService(validProvider);
+          console.log("✅ 기본 프로바이더 및 서비스 초기화 완료");
+          return validProvider;
+        }
+        return null;
+      });
+    } catch (providerError) {
+      console.error("⚠️ BrowserProvider 생성 실패:", providerError);
+      toast.error("기본 프로바이더 초기화에 실패했습니다");
+      return null;
+    }
+  } catch (error) {
+    console.error("⚠️ 기본 프로바이더 초기화 실패:", error);
+    return null;
+  }
+};
+
+// 항상 시작 시 프로바이더 초기화
+initializeDefaultProvider();
+
 export function useBattleLogic() {
+  // 초기화 완료 여부를 추적하는 ref 추가
+  const isInitialized = useRef(false);
+  const isLoadingRef = useRef(false);
+  
+  // 하드코딩된 프로바이더는 이제 전역 변수 사용
+  // const defaultProviderRef = useRef<ethers.JsonRpcProvider | null>(null);
+  
   // 지갑 관련 상태
   const [account, setAccount] = useState<string>('');
-  const [provider, setProvider] = useState<ethers.Provider | null>(null);
+  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [balance, setBalance] = useState<string>("0.0000");
   
-  // Featured battle data
-  const featuredBattle: Battle = {
-    id: 0,
-    title: "Who is better at soccer?",
-    optionA: "Neymar",
-    optionB: "Ronaldinho", 
-    betAmount: "0.05",
-    participants: 1842,
-    thumbnail: "/battle-thumbnail.jpg"
-  };
+  // 배틀 데이터 상태
+  const [featuredBattle, setFeaturedBattle] = useState<Battle | null>({
+    id: 1,
+    title: "Loading Battle...",
+    optionA: "Option A",
+    optionB: "Option B",
+    betAmount: "0.01",
+    participants: 0,
+    waiting: false
+  } as Battle);
   
   // 배틀 관련 상태
   const [hotBattles, setHotBattles] = useState<Battle[]>([
@@ -63,14 +204,13 @@ export function useBattleLogic() {
       betAmount: "0.03", 
       participants: 128,
       quizzesA: [
-        "Neymar has won more international trophies than Ronaldinho.",
-        "Neymar's goal scoring record at club level is better than Ronaldinho's was."
+        "Neymar has won more international trophies than Ronaldinho's was."
       ],
       quizzesB: [
         "Ronaldinho won the Ballon d'Or, which Neymar has never won.",
         "Ronaldinho had a greater impact on world football than Neymar."
       ],
-      quizzesAAnswers: ["true", "true"],
+      quizzesAAnswers: ["true"],
       quizzesBAnswers: ["true", "true"]
     }
   ]);
@@ -140,233 +280,424 @@ export function useBattleLogic() {
   const [battleStatus, setBattleStatus] = useState<BattleStatus | null>(null);
   const [unsubscribeStatus, setUnsubscribeStatus] = useState<(() => void) | null>(null);
   
-  // 배틀 데이터 로딩 함수
+  // 사이드베팅 관련 상태
+  const [player1Odds, setPlayer1Odds] = useState<string>("0");
+  const [player2Odds, setPlayer2Odds] = useState<string>("0");
+  const [player1BetAmount, setPlayer1BetAmount] = useState<string>("");
+  const [player2BetAmount, setPlayer2BetAmount] = useState<string>("");
+  
+  // 배틀 데이터 로딩 함수 - 전역 기본 프로바이더 사용
   const loadBattleData = useCallback(async () => {
+    // 동시에 여러 번 호출 방지
+    if (isLoadingRef.current) {
+      console.log("⏳ 이미 데이터를 로딩 중입니다. 중복 호출 무시.");
+      return;
+    }
+
+    // 로딩 타임아웃 설정
+    let loadingTimeout: NodeJS.Timeout | null = null;
+
     try {
-      if (!provider || !isConnected) {
-        console.log("지갑이 연결되지 않았습니다.");
+      // 로딩 상태 설정
+      isLoadingRef.current = true;
+      setIsLoadingBattles(true);
+
+      // 30초 타임아웃 설정 - 로딩이 너무 오래 걸리면 자동으로 초기화
+      loadingTimeout = setTimeout(() => {
+        console.warn("⚠️ 데이터 로딩 타임아웃 발생! 로딩 상태 초기화");
+        isLoadingRef.current = false;
+        setIsLoadingBattles(false);
+      }, 30000);
+
+      console.log("🔄 배틀 데이터 로딩 시작");
+
+      // 기본 프로바이더가 없으면 초기화
+      if (!globalDefaultProvider) {
+        await initializeDefaultProvider();
+      }
+
+      // 사용할 서비스 결정 (지갑 연결 여부에 따라)
+      const serviceToUse = isConnected && provider 
+        ? new BattleFactoryService(provider) // 지갑 연결 시 연결된 프로바이더 사용
+        : globalBattleFactoryService; // 연결 안된 경우 기본 프로바이더 사용
+
+      if (!serviceToUse) {
+        throw new Error("서비스가 초기화되지 않았습니다");
+      }
+
+      // 모든 배틀 목록 가져오기
+      console.log("📋 모든 배틀 데이터 가져오기");
+      const result = await serviceToUse.getAllBattleMetas();
+
+      if (!result.success || !result.battleMetas) {
+        console.error("배틀 데이터 가져오기 실패:", result.message);
+        
+        // 조기 반환하기 전에 상태 정리
+        if (loadingTimeout) clearTimeout(loadingTimeout);
+        isLoadingRef.current = false;
+        setIsLoadingBattles(false);
+        
+        // 에러 토스트 표시
+        toast.error("배틀 데이터를 가져오는데 실패했습니다");
         return;
       }
 
-      setIsLoadingBattles(true);
-      console.log("배틀 데이터 로딩 시작");
+      console.log(`${result.battleMetas.length}개 배틀 발견`);
 
-      // BattleFactoryService 초기화
-      const { BattleFactoryService } = await import('../services/contracts');
+      // 배틀 데이터 처리
+      const allBattles = result.battleMetas.map(meta => ({
+        id: meta.battleId,
+        title: meta.title || 'Untitled Battle',
+        optionA: meta.player1Bet || 'Option A',
+        optionB: meta.isAccepted ? (meta.player2Bet || 'Option B') : "Open for challenge",
+        contractAddress: meta.battleContract || '',
+        betAmount: formatEther(meta.betAmount) || '0.01',
+        participants: meta.isAccepted ? 2 : 1,
+        category: 'general',
+        waiting: !meta.isAccepted,
+        creator: meta.player1 || '',
+        status: {
+          isActive: true,
+          sideBettingOpen: true,
+          sideBettingDeadline: Date.now() + 86400000, // 현재 시간 + 24시간
+          committeeRecruitmentOpen: true,
+          committeeCount: 0,
+          minimumCommittee: meta.minimumCommittee || 3,
+          votingPhase: false,
+          votingDeadline: Date.now() + 172800000, // 현재 시간 + 48시간
+          gameEnded: false
+        }
+      }));
+
+      // 활성 배틀 (수락된 배틀)
+      const activeBattles = allBattles.filter(battle => !battle.waiting);
+
+      // 대기 중인 배틀 (수락되지 않은 배틀)
+      const waitingBattles = allBattles.filter(battle => battle.waiting);
+
+      // 내 배틀 (내 주소로 필터링) - 계정이 있을 때만
+      const myBattles = isConnected && account
+        ? allBattles.filter(battle => 
+            battle.creator.toLowerCase() === account.toLowerCase())
+        : [];
+
+      // 상태 업데이트
+      setHotBattles(activeBattles.length > 0 ? activeBattles : []);
+      setWaitingBattles(waitingBattles.length > 0 ? waitingBattles : []);
+      setMyBattles(myBattles.length > 0 ? myBattles : []);
       
-      // ENS 비활성화된 provider 생성
-      const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
-        chainId: 133, // HashKey Testnet chainId
-        name: 'HashKey Testnet',
-        ensAddress: undefined // ENS 비활성화
+      // 대표 배틀 설정 - null일 가능성 없애기 위해 조건 수정
+      if (activeBattles.length > 0) {
+        setFeaturedBattle(activeBattles[0]);
+      } else if (waitingBattles.length > 0) {
+        setFeaturedBattle(waitingBattles[0]);
+      }
+
+      console.log("✅ 배틀 데이터 로딩 완료", {
+        all: allBattles.length,
+        active: activeBattles.length,
+        waiting: waitingBattles.length,
+        my: myBattles.length
       });
-      
-      const battleFactoryService = new BattleFactoryService(web3Provider);
 
-      // 활성 배틀 로드
-      const activeBattlesResult = await battleFactoryService.getActiveBattles();
-      if (activeBattlesResult.success && activeBattlesResult.battleMetas) {
-        const formattedHotBattles = activeBattlesResult.battleMetas.map(meta => ({
-          id: meta.battleId,
-          title: meta.title,
-          optionA: meta.player1Bet,
-          optionB: meta.player2Bet,
-          betAmount: ethers.formatEther(meta.betAmount),
-          participants: 2, // player1과 player2가 있으므로
-          waiting: false,
-          contractAddress: meta.battleContract,
-          contractType: 'Faucet' as const,
-          quizzesA: [], // 실제 퀴즈 데이터는 별도로 로드 필요
-          quizzesB: [],
-          quizzesAAnswers: [],
-          quizzesBAnswers: []
-        }));
-        setHotBattles(formattedHotBattles);
-      }
-
-      // 대기 중인 배틀 로드
-      const waitingBattlesResult = await battleFactoryService.getWaitingBattles();
-      if (waitingBattlesResult.success && waitingBattlesResult.battleMetas) {
-        const formattedWaitingBattles = waitingBattlesResult.battleMetas.map(meta => ({
-          id: meta.battleId,
-          title: meta.title,
-          optionA: meta.player1Bet,
-          optionB: "Open for challenge",
-          betAmount: ethers.formatEther(meta.betAmount),
-          participants: 1,
-          waiting: true,
-          contractAddress: meta.battleContract,
-          contractType: 'Faucet' as const,
-          quizzesA: [], // 실제 퀴즈 데이터는 별도로 로드 필요
-          quizzesB: [],
-          quizzesAAnswers: [],
-          quizzesBAnswers: []
-        }));
-        setWaitingBattles(formattedWaitingBattles);
-      }
-
-      // 내 배틀 로드 (내 주소로 필터링)
-      const allBattlesResult = await battleFactoryService.getAllBattleMetas();
-      if (allBattlesResult.success && allBattlesResult.battleMetas) {
-        const myBattlesList = allBattlesResult.battleMetas
-          .filter(meta => meta.player1 === account || meta.player2 === account)
-          .map(meta => ({
-            id: meta.battleId,
-            title: meta.title,
-            optionA: meta.player1Bet,
-            optionB: meta.player2Bet || "Open for challenge",
-            betAmount: ethers.formatEther(meta.betAmount),
-            participants: meta.player2 ? 2 : 1,
-            waiting: !meta.isAccepted,
-            contractAddress: meta.battleContract,
-            contractType: meta.isAccepted ? 'SideBetting' as const : 'Faucet' as const,
-            myChoice: meta.player1 === account ? 'optionA' : 'optionB',
-            quizzesA: [], // 실제 퀴즈 데이터는 별도로 로드 필요
-            quizzesB: [],
-            quizzesAAnswers: [],
-            quizzesBAnswers: []
-          }));
-        setMyBattles(myBattlesList);
-      }
-
-      console.log("배틀 데이터 로딩 완료");
     } catch (error) {
-      console.error("배틀 데이터 로딩 중 오류:", error);
-      setError("배틀 데이터를 불러오는 중 오류가 발생했습니다.");
+      console.error("❌ 배틀 데이터 로딩 오류:", error);
+      toast.error("배틀 데이터 로딩 중 오류가 발생했습니다");
     } finally {
+      // 타임아웃 제거
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+      
+      // 로딩 상태 해제
+      isLoadingRef.current = false;
       setIsLoadingBattles(false);
     }
-  }, [provider, isConnected, account]);
+  }, [isConnected, account, provider, setIsLoadingBattles]);
 
-  // 지갑 연결 시 배틀 데이터 로드
+  // 초기화 함수 - 페이지 로드 시 한 번만 실행
   useEffect(() => {
-    if (isConnected && provider) {
-      loadBattleData();
+    // 컴포넌트 내 초기화가 이미 진행된 경우
+    if (isInitialized.current) {
+      console.log("컴포넌트 내 초기화가 이미 완료되었습니다. 중복 초기화 방지.");
+      return;
     }
-  }, [isConnected, provider, loadBattleData]);
-  
-  // 초기화 함수
-  useEffect(() => {
+    
+    console.log("🔄 useBattleLogic 초기화 시작 - 기본 프로바이더 사용");
+    isInitialized.current = true;
+    isGlobalInitialized = true;
+    
+    // 초기화 타임아웃 설정
+    let initTimeout: NodeJS.Timeout | null = null;
+    
     try {
-      console.log("🔄 useBattleLogic 초기화 시작");
-      checkConnection();
+      // 1. 데이터 로딩 시작 - 기본 프로바이더로 즉시 시작
+      console.log("기본 프로바이더로 데이터 로딩 시작");
       
-      // Set up account change listener
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        // Setup event listeners for MetaMask
-        (window as any).ethereum.on('accountsChanged', handleAccountChange);
-        (window as any).ethereum.on('chainChanged', async (chainId: string) => {
-          console.log("🔗 체인 변경 감지:", chainId);
-          // HashKey Testnet이 아닌 경우 전환 시도
-          if (chainId !== '0x85') {
-            try {
-              await switchToHashKeyNetwork();
-            } catch (error) {
-              console.error("네트워크 전환 실패:", error);
+      // 초기화 타임아웃 설정 - 15초 이상 진행되지 않으면 초기화 상태 리셋
+      initTimeout = setTimeout(() => {
+        console.warn("⚠️ 초기화 타임아웃 발생. 초기화 상태 리셋");
+        isInitialized.current = false;
+        isGlobalInitialized = false;
+        isLoadingRef.current = false;
+        setIsLoadingBattles(false);
+      }, 15000);
+      
+      // 약간의 지연 후 데이터 로딩 시작 - 컴포넌트 마운트 완료 후
+      setTimeout(() => {
+        if (!isLoadingRef.current) {
+          loadBattleData()
+            .then(() => {
+              console.log("초기 데이터 로딩 완료");
+              if (initTimeout) clearTimeout(initTimeout);
+            })
+            .catch(err => {
+              console.error("초기 데이터 로딩 오류:", err);
+              isLoadingRef.current = false; 
+              setIsLoadingBattles(false);
+            });
+        }
+      }, 1000);
+      
+      // 2. 연결 상태 로컬 스토리지에서 복원
+      const tryRestoreWalletConnection = async () => {
+        try {
+          // 로컬 스토리지에서 이전 연결 정보 확인
+          const wasConnected = localStorage.getItem('walletConnected') === 'true';
+          
+          // 이전에 연결된 적이 있고, ethereum 객체가 있는 경우
+          if (wasConnected && typeof window !== 'undefined' && (window as any).ethereum) {
+            console.log("이전 지갑 연결 기록 발견, 연결 복원 시도");
+            
+            // 현재 연결된 계정 확인
+            const accounts = await (window as any).ethereum.request({ 
+              method: 'eth_accounts' // 연결 요청 없이 현재 계정 확인
+            });
+            
+            if (accounts && accounts.length > 0) {
+              console.log("이미 연결된 지갑 발견:", accounts[0]);
+              
+              // 지갑 프로바이더로 전환
+              const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
+                chainId: 133,
+                name: 'HashKey Testnet',
+                ensAddress: undefined
+              });
+              
+              // 계정 정보 설정
+              setAccount(accounts[0]);
+              setProvider(web3Provider);
+              setIsConnected(true);
+              
+              // 잔액 업데이트
+              try {
+                const balance = await web3Provider.getBalance(accounts[0]);
+                const formattedBalance = ethers.formatEther(balance);
+                setBalance(parseFloat(formattedBalance).toFixed(4));
+              } catch (balanceError) {
+                console.error("잔액 조회 오류:", balanceError);
+              }
+              
+              // 연결 복원 성공 메시지
+              console.log("지갑 연결이 복원되었습니다:", accounts[0]);
+              toast.success("지갑 연결이 복원되었습니다");
+              
+              // 데이터 다시 로드
+              await loadBattleData();
+              
+              return true;
+            } else {
+              console.log("이전에 연결된 지갑을 찾을 수 없음");
+              localStorage.removeItem('walletConnected');
             }
           }
-        });
-        
-        // Clean up event listeners when component unmounts
-        return () => {
-          if ((window as any).ethereum) {
-            (window as any).ethereum.removeListener('accountsChanged', handleAccountChange);
-            (window as any).ethereum.removeListener('chainChanged', () => window.location.reload());
-          }
-        };
-      }
-    } catch (err) {
-      console.error("❌ 초기화 오류:", err);
-      setError("초기화 중 오류가 발생했습니다.");
-    }
-  }, []);
-  
-  // Handle account changes
-  const handleAccountChange = (accounts: string[]) => {
-    if (accounts.length > 0) {
-      setAccount(accounts[0]);
-      setIsConnected(true);
-    } else {
-      setAccount('');
-      setIsConnected(false);
-    }
-  };
-  
-  // 지갑 연결 확인
-  const checkConnection = async () => {
-    if (typeof window !== 'undefined' && (window as any).ethereum) {
-      try {
-        console.log("🔍 메타마스크 연결 확인 중...");
-        const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
-          chainId: 133, // HashKey Testnet chainId
-          name: 'HashKey Testnet',
-          ensAddress: undefined // ENS 비활성화
-        });
-        const accounts = await web3Provider.listAccounts();
-        
-        if (accounts.length > 0) {
-          console.log("✅ 지갑 연결됨:", accounts[0].address);
-          setAccount(accounts[0].address);
-          setProvider(web3Provider);
-          setIsConnected(true);
-        } else {
-          console.log("⚠️ 연결된 지갑 없음");
+          return false;
+        } catch (error) {
+          console.error("지갑 연결 복원 중 오류:", error);
+          localStorage.removeItem('walletConnected');
+          return false;
         }
-      } catch (error) {
-        console.error("❌ 지갑 연결 확인 오류:", error);
-        setError("지갑 연결 확인 중 오류가 발생했습니다.");
+      };
+      
+      // 연결 복원 시도
+      tryRestoreWalletConnection().catch(console.error);
+      
+      // 3. 이벤트 리스너 설정
+      if (typeof window !== 'undefined' && (window as any).ethereum) {
+        try {
+          // 계정 변경 이벤트
+          (window as any).ethereum.on('accountsChanged', handleAccountChange);
+          
+          // 체인 변경 이벤트
+          (window as any).ethereum.on('chainChanged', (chainId: string) => {
+            console.log("🔗 체인 변경 감지:", chainId);
+            
+            // 체인 변경 시 데이터 다시 로드
+            if (!isLoadingRef.current) {
+              loadBattleData();
+            }
+          });
+          
+          // 연결 해제 이벤트
+          (window as any).ethereum.on('disconnect', () => {
+            console.log("🔌 지갑 연결 해제 감지");
+            setIsConnected(false);
+            setAccount('');
+            localStorage.removeItem('walletConnected');
+          });
+        } catch (eventError) {
+          console.error("이벤트 설정 중 오류:", eventError);
+        }
       }
-    } else {
-      console.log("⚠️ 메타마스크가 설치되어 있지 않음");
-      setError("메타마스크가 설치되어 있지 않습니다.");
+      
+      // 컴포넌트 언마운트 시 청소
+      return () => {
+        // 타임아웃 정리
+        if (initTimeout) clearTimeout(initTimeout);
+        
+        // 이벤트 리스너 제거
+        if (typeof window !== 'undefined' && (window as any).ethereum) {
+          try {
+            (window as any).ethereum.removeListener('accountsChanged', handleAccountChange);
+            (window as any).ethereum.removeListener('chainChanged', () => {});
+          } catch (listenerError) {
+            console.error("이벤트 리스너 제거 중 오류:", listenerError);
+          }
+        }
+        
+        // 로딩 상태 정리
+        isLoadingRef.current = false;
+        setIsLoadingBattles(false);
+      };
+    } catch (error) {
+      console.error("초기화 중 오류 발생:", error);
+      toast.error("초기화 중 오류가 발생했습니다. 페이지를 새로고침 해주세요.");
+      
+      // 오류 발생 시 상태 정리
+      if (initTimeout) clearTimeout(initTimeout);
+      isInitialized.current = false;
+      isGlobalInitialized = false;
+      isLoadingRef.current = false;
+      setIsLoadingBattles(false);
     }
-  };
-  
-  // 지갑 연결
-  const connectWallet = async () => {
-    if (typeof window !== 'undefined' && typeof (window as any).ethereum !== 'undefined') {
-      try {
-        // HashKey Testnet으로 전환
+  }, [loadBattleData, setIsLoadingBattles]);
+
+  // 지갑 연결 함수 - 사용자가 버튼 클릭 시에만 호출됨
+  const connectWallet = useCallback(async () => {
+    if (typeof window === 'undefined' || !(window as any).ethereum) {
+      console.error("MetaMask가 설치되어 있지 않습니다.");
+      toast.error("MetaMask가 설치되어 있지 않습니다. 설치 후 다시 시도해주세요.");
+      return;
+    }
+
+    try {
+      console.log("사용자 요청으로 지갑 연결 시도");
+      
+      // 지갑 연결 요청
+      const accounts = await (window as any).ethereum.request({ 
+        method: 'eth_requestAccounts' 
+      });
+      
+      if (accounts.length > 0) {
+        // 지갑 프로바이더로 전환
+        const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
+          chainId: 133,
+          name: 'HashKey Testnet',
+          ensAddress: undefined
+        });
+        
+        // 상태 업데이트
+        setAccount(accounts[0]);
+        setProvider(web3Provider); // 지갑 프로바이더 설정
+        setIsConnected(true);
+        
+        // 연결 상태 로컬 스토리지에 저장
+        localStorage.setItem('walletConnected', 'true');
+        
+        // 네트워크 확인
         await switchToHashKeyNetwork();
         
-        // wallet_requestPermissions를 사용하여 이전 연결 상태를 무시하고 
-        // 항상 새로운 연결 확인 창이 표시되도록 함
-        await (window as any).ethereum.request({
-          method: 'wallet_requestPermissions',
-          params: [{
-            eth_accounts: {}
-          }]
-        });
+        console.log("MetaMask에 연결되었습니다:", accounts[0]);
+        toast.success("지갑 연결 성공!");
         
-        // 권한 요청 후 계정 접근 요청
-        const accounts = await (window as any).ethereum.request({ 
-          method: 'eth_requestAccounts' 
-        });
-        
-        // Then initialize the provider with ENS disabled
-        const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
-          chainId: 133, // HashKey Testnet chainId
-          name: 'HashKey Testnet',
-          ensAddress: undefined // ENS 비활성화
-        });
-        
-        // Update state
-        setAccount(accounts[0]);
-        setProvider(web3Provider as any);
-        setIsConnected(true);
-        setError(null);
-        
-      } catch (error) {
-        setError("지갑 연결에 실패했습니다.");
-        console.error("지갑 연결 오류:", error);
+        // 지갑 연결 후 데이터 다시 로드
+        console.log("지갑 연결 후 배틀 데이터 로드 시작");
+        await loadBattleData();
       }
-    } else {
-      setError("메타마스크가 설치되어 있지 않습니다.");
-      alert("메타마스크를 설치해주세요!");
+    } catch (error) {
+      console.error("지갑 연결 실패:", error);
+      toast.error("지갑 연결에 실패했습니다. 다시 시도해주세요.");
+      localStorage.removeItem('walletConnected');
     }
-  };
-  
-  // HashKey Testnet으로 전환하는 함수
+  }, [loadBattleData]);
+
+  // 지갑 연결 해제 함수
+  const disconnectWallet = useCallback(async () => {
+    // 상태 초기화
+    setAccount('');
+    setProvider(null);
+    setIsConnected(false);
+    setBalance("0.0000");
+    
+    // 로컬 스토리지에서 연결 상태 제거
+    localStorage.removeItem('walletConnected');
+    
+    console.log("지갑 연결이 해제되었습니다. 기본 프로바이더로 전환");
+    toast.success("지갑 연결이 해제되었습니다.");
+    
+    // 지갑 연결이 해제되면 기본 프로바이더 사용으로 자동 전환됨
+    // 데이터 다시 로드
+    console.log("지갑 연결 해제 후 배틀 데이터 로드 시작");
+    await loadBattleData();
+  }, [loadBattleData]);
+
+  // 계정 변경 처리
+  const handleAccountChange = useCallback(async (accounts: string[]) => {
+    if (accounts.length === 0) {
+      // 계정이 연결 해제된 경우
+      console.log("지갑 연결 해제 감지");
+      setIsConnected(false);
+      setAccount('');
+      setProvider(null);
+      setBalance("0.0000");
+      
+      // 기본 프로바이더로 자동 전환됨
+      console.log("기본 프로바이더로 전환됨");
+      
+      // 데이터 다시 로드
+      console.log("지갑 연결 해제 후 배틀 데이터 로드 시작");
+      await loadBattleData();
+      return;
+    }
+    
+    // 새 계정으로 연결된 경우
+    const newAccount = accounts[0];
+    console.log("계정 변경 감지:", newAccount);
+    
+    try {
+      // 새 계정으로 프로바이더 업데이트
+      const web3Provider = new ethers.BrowserProvider((window as any).ethereum, {
+        chainId: 133,
+        name: 'HashKey Testnet',
+        ensAddress: undefined
+      });
+      
+      setAccount(newAccount);
+      setProvider(web3Provider);
+      setIsConnected(true);
+      
+      // 잔액 업데이트
+      const balance = await web3Provider.getBalance(newAccount);
+      const formattedBalance = ethers.formatEther(balance);
+      setBalance(parseFloat(formattedBalance).toFixed(4));
+      
+      // 계정 변경 후 데이터 다시 로드
+      console.log("계정 변경 후 배틀 데이터 로드 시작");
+      await loadBattleData();
+    } catch (error) {
+      console.error("계정 변경 중 오류:", error);
+    }
+  }, [loadBattleData]); // loadBattleData 의존성 추가
+
+  // 지갑 연결 후 네트워크 전환
   const switchToHashKeyNetwork = async () => {
     try {
       console.log("🔄 HashKey Testnet으로 전환 시도 중...");
@@ -421,959 +752,338 @@ export function useBattleLogic() {
       throw error;
     }
   };
-  
-  // 지갑 연결 해제
-  const disconnectWallet = async () => {
-    if (typeof window !== 'undefined' && typeof (window as any).ethereum !== 'undefined') {
-      try {
-        // This function is now called after the user confirms in the custom modal
-        // No need for window.confirm here
-        
-        // wallet_revokePermissions 메소드를 사용하여 이 사이트에 대한 권한 해제 시도
-        try {
-          await (window as any).ethereum.request({
-            method: 'wallet_revokePermissions',
-            params: [{
-              eth_accounts: {}
-            }]
-          });
-        } catch (revokeError) {
-          // wallet_revokePermissions가 지원되지 않을 경우 무시
-          console.log("권한 해제 지원되지 않음:", revokeError);
-        }
-        
-        // 앱 상태 초기화
-        setAccount('');
-        setProvider(null);
-        setIsConnected(false);
-        setError(null);
-        
-        console.log("지갑 연결이 해제되었습니다.");
-      } catch (error) {
-        setError("지갑 연결 해제 중 오류가 발생했습니다.");
-        console.error("지갑 연결 해제 오류:", error);
-      }
+
+  // 서비스 초기화 - provider 상태에 따라 지갑 또는 기본 제공자 사용
+  const battleFactoryService = useMemo(() => {
+    return isConnected && provider 
+      ? new BattleFactoryService(provider) 
+      : (globalBattleFactoryService || new BattleFactoryService(globalDefaultProvider!));
+  }, [isConnected, provider]);
+
+  const sideBettingService = useMemo(() => {
+    return isConnected && provider 
+      ? new SideBettingService(provider) 
+      : (globalSideBettingService || new SideBettingService(globalDefaultProvider!));
+  }, [isConnected, provider]);
+
+  const faucetService = useMemo(() => {
+    return isConnected && provider 
+      ? new FaucetService(provider) 
+      : (globalFaucetService || new FaucetService(globalDefaultProvider!));
+  }, [isConnected, provider]);
+
+  // 사이드베팅 처리
+  const handlePlaceSideBet = async (battle: Battle & { sideBettingContract: string }, playerChoice: string, amount: string) => {
+    if (!amount || parseFloat(amount) <= 0) {
+      toast.error("베팅 금액을 입력해주세요");
+      return;
     }
-  };
-  
-  // 파일 업로드 핸들러
-  const handleFileUpload = (
-    setter: (photo: string) => void,
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
+    
+    if (!provider || !account) {
+      toast.error("지갑이 연결되지 않았습니다");
+      return;
+    }
+
     try {
-      const file = event.target.files?.[0];
-      if (file) {
-        const imageUrl = URL.createObjectURL(file);
-        setter(imageUrl);
+      // 금액을 gwei 단위로 전달
+      const amountInGwei = parseEther(amount);
+      
+      // 지갑 잔액 확인
+      const balance = await provider.getBalance(account);
+      
+      if (balance < amountInGwei) {
+        toast.error(`잔액이 부족합니다. 필요: ${amount} HSK, 보유: ${formatEther(balance)} HSK`);
+        return;
+      }
+      
+      const result = await sideBettingService.placeBet(
+        battle.sideBettingContract,
+        battle.id,
+        playerChoice,
+        amountInGwei.toString() // gwei 단위로 전달
+      );
+
+      if (result.success) {
+        toast.success("베팅이 완료되었습니다");
+        // 베팅 금액 초기화
+        setPlayer1BetAmount("");
+        setPlayer2BetAmount("");
+      } else {
+        toast.error(result.message || "베팅에 실패했습니다");
       }
     } catch (error) {
-      setError("파일 업로드 중 오류가 발생했습니다.");
-      console.error("파일 업로드 오류:", error);
+      console.error("Failed to place bet:", error);
+      toast.error("베팅에 실패했습니다");
     }
   };
-  
-  // 배틀 상세 보기
-  const handleViewBattleDetails = (battle: Battle) => {
-    try {
-      setSelectedBattleDetails(battle);
+
+  // 모든 상태와 함수를 객체로 반환
+  return {
+    // 상태 변수들
+    provider,
+    account,
+    isConnected,
+    balance,
+    isLoadingBattles,
+    setIsLoadingBattles, // 상태 설정 함수 추가
+    error,
+    allBattles: hotBattles, // 활성 배틀 목록
+    waitingBattles, // 대기 중인 배틀 목록
+    myBattles, // 내 배틀 목록
+    featuredBattle, // 대표 배틀
+    hotBattles, // 핫 배틀 목록(별도 반환)
+    selectedBattleDetails, // 선택된 배틀 상세 정보
+    player1Odds,
+    player2Odds,
+    player1BetAmount,
+    player2BetAmount,
+    
+    // 기타 상태 변수
+    newBattle,
+    setNewBattle,
+    selectedChallenge,
+    setSelectedChallenge,
+    challengeResponse,
+    setChallengeResponse,
+    responsePhoto,
+    setResponsePhoto,
+    showSideBetOptions, 
+    setShowSideBetOptions,
+    challengerQuizzes, 
+    challengerQuizAnswers,
+    setChallengerQuizzes,
+    setChallengerQuizAnswers,
+    isCommitteeMode,
+    setIsCommitteeMode,
+    committeeQuizzes,
+    setCommitteeQuizzes,
+    currentQuizIndex,
+    setCurrentQuizIndex,
+    quizTimer,
+    setQuizTimer,
+    timerActive,
+    setTimerActive,
+    selectedAnswer,
+    setSelectedAnswer,
+    committeeAnswers,
+    setCommitteeAnswers,
+    showVotingPopup,
+    setShowVotingPopup,
+    selectedVote,
+    setSelectedVote,
+    allAnswersCorrect,
+    setAllAnswersCorrect,
+    
+    // 함수들
+    loadBattleData, // 데이터 수동 새로고침을 위해 함수 추가
+    setAccount,
+    setProvider,
+    setBalance,
+    setIsConnected,
+    setError,
+    setHotBattles,
+    setWaitingBattles,
+    setMyBattles,
+    setFeaturedBattle,
+    setSelectedBattleDetails,
+    setPlayer1Odds,
+    setPlayer2Odds,
+    setPlayer1BetAmount,
+    setPlayer2BetAmount,
+    
+    // 액션 함수들
+    connectWallet,
+    disconnectWallet,
+    handleAccountChange,
+    handlePlaceSideBet,
+    
+    // 배틀 관련 함수
+    handleFileUpload: (setter: (photo: string) => void, event: React.ChangeEvent<HTMLInputElement>) => {
+      try {
+        const file = event.target.files?.[0];
+        if (file) {
+          const imageUrl = URL.createObjectURL(file);
+          setter(imageUrl);
+        }
+      } catch (error) {
+        console.error("파일 업로드 오류:", error);
+      }
+    },
+    
+    handleViewBattleDetails: (battle: Battle) => {
+      // status가 없는 경우 기본값 설정
+      const battleWithStatus = {
+        ...battle,
+        status: battle.status || {
+          isActive: true,
+          sideBettingOpen: true,
+          sideBettingDeadline: Date.now() + 86400000,
+          committeeRecruitmentOpen: true,
+          committeeCount: 0,
+          minimumCommittee: 3,
+          votingPhase: false,
+          votingDeadline: Date.now() + 172800000,
+          gameEnded: false
+        }
+      };
+      setSelectedBattleDetails(battleWithStatus);
       const popup = document.getElementById('battleDetailsPopup');
       if (popup) popup.classList.remove('hidden');
-    } catch (error) {
-      setError("배틀 상세 정보를 불러오는 중 오류가 발생했습니다.");
-      console.error("배틀 상세 보기 오류:", error);
-    }
-  };
-  
-  // 커미티 참여
-  // 커미티 참여 함수
-  const handleJoinCommittee = useCallback((battle: Battle) => {
-    try {
-      // 퀴즈 유효성 확인   
-      if (!battle.quizzesA || !battle.quizzesB || 
-          battle.quizzesA.length === 0 || 
-          battle.quizzesB.length === 0) {
-        alert("이 배틀에는 풀어야 할 퀴즈가 없습니다.");
-        return;
-      }
-      
-      // 답변 데이터 확인
-      if (!battle.quizzesAAnswers || !battle.quizzesBAnswers) {
-        alert("이 배틀에 대한 답변 데이터가 없습니다.");
-        console.error("답변 데이터 누락:", battle);
-        return;
-      }
-      
-      // 현재 배틀 저장
-      setSelectedBattleDetails(battle);
-      
-      // 로깅
-      console.log("배틀 데이터:", battle);
-      console.log("퀴즈 A 답변:", battle.quizzesAAnswers);
-      console.log("퀴즈 B 답변:", battle.quizzesBAnswers);
-      
-      // 양측 퀴즈 통합
-      const combinedQuizzes: CommitteeQuiz[] = [
-        ...(battle.quizzesA?.map(quiz => ({ question: quiz, player: 'A' as const })) || []),
-        ...(battle.quizzesB?.map(quiz => ({ question: quiz, player: 'B' as const })) || [])
-      ];
-      
-      setCommitteeQuizzes(combinedQuizzes);
-      
-      // 빈 답변 배열 초기화
-      const totalQuizCount = (battle.quizzesA?.length || 0) + (battle.quizzesB?.length || 0);
-      setCommitteeAnswers(Array(totalQuizCount).fill(null));
-      
-      // 팝업 처리
-      const detailsPopup = document.getElementById('battleDetailsPopup');
-      if (detailsPopup) detailsPopup.classList.add('hidden');
-      
-      const quizPopup = document.getElementById('committeeQuizPopup');
-      if (quizPopup) quizPopup.classList.remove('hidden');
-      
-      // 퀴즈 상태 설정
-      setIsCommitteeMode(true);
-      setCurrentQuizIndex(0);
-      setSelectedAnswer(null);
-      setQuizTimer(3);
-      
-      // 타이머 시작
-      setTimeout(() => {
-        setTimerActive(true);
-      }, 0);
-    } catch (error) {
-      setError("커미티 참여 중 오류가 발생했습니다.");
-      console.error("커미티 참여 오류:", error);
-    }
-  }, []);
-  
-  // 커미티 퀴즈 제출
-  const handleCommitteeQuizSubmit = useCallback((answer: QuizAnswer) => {
-    try {
-      if (!selectedBattleDetails || currentQuizIndex >= committeeQuizzes.length) {
-        return;
-      }
-      
-      // 현재 퀴즈와 정답 가져오기
-      const currentQuiz = committeeQuizzes[currentQuizIndex];
-      
-      // 정답 확인
-      let correctAnswer: string | undefined;
-      
-      if (currentQuiz.player === 'A') {
-        // A 플레이어 퀴즈
-        const quizIndex = selectedBattleDetails.quizzesA?.findIndex(
-          q => q === currentQuiz.question
-        );
-        
-        if (quizIndex !== undefined && quizIndex >= 0) {
-          correctAnswer = selectedBattleDetails.quizzesAAnswers?.[quizIndex];
-        }
-      } else {
-        // B 플레이어 퀴즈
-        const quizIndex = selectedBattleDetails.quizzesB?.findIndex(
-          q => q === currentQuiz.question
-        );
-        
-        if (quizIndex !== undefined && quizIndex >= 0) {
-          correctAnswer = selectedBattleDetails.quizzesBAnswers?.[quizIndex];
-        }
-      }
-      
-      // 정답 확인
-      const isCorrect = answer.answer === correctAnswer;
-      
-      if (!isCorrect) {
-        // 오답 처리
-        const quizPopup = document.getElementById('committeeQuizPopup');
-        if (quizPopup) quizPopup.classList.add('hidden');
-        
-        // 커미티 모드 종료
-        setIsCommitteeMode(false);
-        setCommitteeQuizzes([]);
-        setCurrentQuizIndex(0);
-        setTimerActive(false);
-        
-        alert("Sorry, that's incorrect. You can't continue as a committee member.");
-        return;
-      }
-      
-      // 답변 저장
-      setCommitteeAnswers(prev => {
-        const updated = [...prev];
-        updated[currentQuizIndex] = answer;
-        return updated;
-      });
-      
-      // 타이머 리셋
-      setQuizTimer(3);
-      setTimerActive(true);
-      setSelectedAnswer(null);
-      
-      // 다음 퀴즈로 이동 또는 종료
-      if (currentQuizIndex < committeeQuizzes.length - 1) {
-        setCurrentQuizIndex(prev => prev + 1);
-      } else {
-        // 모든 퀴즈 통과
-        processCommitteeResults();
-        
-        setAllAnswersCorrect(true);
-        setIsCommitteeMode(false);
-        setCommitteeQuizzes([]);
-        setCurrentQuizIndex(0);
-        setTimerActive(false);
-        
-        // 퀴즈 팝업 닫기
-        const quizPopup = document.getElementById('committeeQuizPopup');
-        if (quizPopup) quizPopup.classList.add('hidden');
-        
-        // 투표 팝업 열기
-        setShowVotingPopup(true);
-      }
-    } catch (error) {
-      setError("퀴즈 제출 중 오류가 발생했습니다.");
-      console.error("퀴즈 제출 오류:", error);
-    }
-  }, [selectedBattleDetails, currentQuizIndex, committeeQuizzes]);
-  
-  // 답변 선택 핸들러
-  const handleSelectAnswer = (value: string) => {
-    try {
-      setSelectedAnswer(value);
-      handleCommitteeQuizSubmit({
-        answer: value,
-        quizIndex: currentQuizIndex
-      });
-    } catch (error) {
-      setError("답변 선택 중 오류가 발생했습니다.");
-      console.error("답변 선택 오류:", error);
-    }
-  };
-  
-  // 커미티 결과 처리
-  const processCommitteeResults = () => {
-    try {
-      let playerAScore = 0;
-      let playerBScore = 0;
-      
-      committeeAnswers.forEach((answer, index) => {
-        if (!answer) return;
-        
-        const player = committeeQuizzes[index]?.player;
-        
-        if (player === 'A') {
-          if (answer.answer === 'true') playerAScore++;
-          else if (answer.answer === 'false') playerAScore--;
-        } else if (player === 'B') {
-          if (answer.answer === 'true') playerBScore++;
-          else if (answer.answer === 'false') playerBScore--;
-        }
-      });
-      
-      console.log(`Committee voting results - Player A: ${playerAScore}, Player B: ${playerBScore}`);
-    } catch (error) {
-      setError("결과 처리 중 오류가 발생했습니다.");
-      console.error("결과 처리 오류:", error);
-    }
-  };
-  
-  // 투표 옵션 선택
-  const handleSelectVote = (option: string) => {
-    try {
-      setSelectedVote(option);
-    } catch (error) {
-      setError("투표 선택 중 오류가 발생했습니다.");
-      console.error("투표 선택 오류:", error);
-    }
-  };
-  
-  // 투표 제출
-  const handleSubmitVote = () => {
-    try {
-      if (!selectedVote) {
-        alert("Please select either option A or option B to vote.");
-        return;
-      }
-      
-      // 플레이어 이름 가져오기
-      const playerName = selectedVote === 'A' 
-        ? selectedBattleDetails?.optionA || "Player A"
-        : selectedBattleDetails?.optionB || "Player B";
-      
-      console.log(`Vote submitted for ${playerName} (option ${selectedVote})`);
-      
-      setShowVotingPopup(false);
-      setSelectedVote(null);
-      setAllAnswersCorrect(false);
-      
-      alert(`Thank you for voting for ${playerName}! Your vote has been recorded.`);
-    } catch (error) {
-      setError("투표 제출 중 오류가 발생했습니다.");
-      console.error("투표 제출 오류:", error);
-    }
-  };
-  
-  // 타이머 실패 처리
-  const handleTimerFailure = useCallback(() => {
-    try {
-      const quizPopup = document.getElementById('committeeQuizPopup');
-      if (quizPopup) quizPopup.classList.add('hidden');
-      
-      setIsCommitteeMode(false);
-      setCommitteeQuizzes([]);
-      setCurrentQuizIndex(0);
-      setTimerActive(false);
-      
-      alert("Time's up! You couldn't answer in time. Please try again.");
-    } catch (error) {
-      setError("타이머 처리 중 오류가 발생했습니다.");
-      console.error("타이머 실패 처리 오류:", error);
-    }
-  }, []);
-  
-  // 타이머 효과
-  useEffect(() => {
-    let timerId: NodeJS.Timeout | undefined;
-    let failureTimerId: NodeJS.Timeout | undefined;
+    },
     
-    try {
-      if (timerActive) {
-        if (quizTimer > 0) {
-          if (quizTimer > 1) {
-            timerId = setTimeout(() => {
-              setQuizTimer(prev => prev - 1);
-            }, 1000);
-          } else {
-            timerId = setTimeout(() => {
-              setQuizTimer(0.75);
-              
-              setTimeout(() => {
-                setQuizTimer(0.5);
-                
-                setTimeout(() => {
-                  setQuizTimer(0.25);
-                  
-                  setTimeout(() => {
-                    setQuizTimer(0);
-                    setTimerActive(false);
-                    
-                    failureTimerId = setTimeout(() => {
-                      handleTimerFailure();
-                    }, 100);
-                  }, 250);
-                }, 250);
-              }, 250);
-            }, 250);
-          }
-        } else {
-          setQuizTimer(0);
-          setTimerActive(false);
-          
-          failureTimerId = setTimeout(() => {
-            handleTimerFailure();
-          }, 200);
-        }
-      }
-    } catch (error) {
-      setError("타이머 처리 중 오류가 발생했습니다.");
-      console.error("타이머 효과 오류:", error);
-    }
+    handleOpenChallenge: (battle: Battle) => {
+      setSelectedChallenge(battle);
+      setChallengeResponse('');
+      setResponsePhoto(null);
+      const popup = document.getElementById('acceptChallengePopup');
+      if (popup) popup.classList.remove('hidden');
+    },
     
-    return () => {
-      if (timerId) clearTimeout(timerId);
-      if (failureTimerId) clearTimeout(failureTimerId);
-    };
-  }, [timerActive, quizTimer, handleTimerFailure]);
-  
-  // 입력 변경 핸들러
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    try {
+    handleChallengerQuizChange: (index: number, value: string) => {
+      const updatedQuizzes = [...challengerQuizzes];
+      updatedQuizzes[index] = value;
+      setChallengerQuizzes(updatedQuizzes);
+    },
+    
+    handleInputChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       const { name, value } = e.target;
-      
-      if (name === 'quizCount') {
-        const count = parseInt(value);
-        if (count >= 1 && count <= 5) {
-          const newQuizzes = [...newBattle.quizzes];
-          const newAnswers = [...newBattle.quizAnswers];
-          
-          if (count > newQuizzes.length) {
-            while (newQuizzes.length < count) {
-              newQuizzes.push('');
-              newAnswers.push('true');
-            }
-          } else if (count < newQuizzes.length) {
-            newQuizzes.splice(count);
-            newAnswers.splice(count);
-          }
-          
-          setNewBattle(prev => ({
-            ...prev,
-            quizCount: count,
-            quizzes: newQuizzes,
-            quizAnswers: newAnswers
-          }));
-        }
-      } else {
-        setNewBattle(prev => ({
-          ...prev,
-          [name]: value
-        }));
-      }
-    } catch (error) {
-      setError("입력 처리 중 오류가 발생했습니다.");
-      console.error("입력 변경 오류:", error);
-    }
-  };
-  
-  // 퀴즈 변경 핸들러
-  const handleQuizChange = (index: number, value: string) => {
-    try {
+      setNewBattle(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    },
+    
+    handleQuizChange: (index: number, value: string) => {
       const updatedQuizzes = [...newBattle.quizzes];
       updatedQuizzes[index] = value;
       setNewBattle(prev => ({
         ...prev,
         quizzes: updatedQuizzes
       }));
-    } catch (error) {
-      setError("퀴즈 변경 중 오류가 발생했습니다.");
-      console.error("퀴즈 변경 오류:", error);
-    }
-  };
-  
-  // 퀴즈 답변 변경 핸들러
-  const handleQuizAnswerChange = (index: number, value: string) => {
-    try {
+    },
+    
+    handleQuizAnswerChange: (index: number, value: string) => {
       const updatedAnswers = [...newBattle.quizAnswers];
-      
-      while (updatedAnswers.length <= index) {
-        updatedAnswers.push('true');
-      }
-      
       updatedAnswers[index] = value;
       setNewBattle(prev => ({
         ...prev,
         quizAnswers: updatedAnswers
       }));
-    } catch (error) {
-      setError("퀴즈 답변 변경 중 오류가 발생했습니다.");
-      console.error("퀴즈 답변 변경 오류:", error);
-    }
-  };
-  
-  // 챌린저 퀴즈 답변 변경 핸들러
-  const handleChallengerQuizAnswerChange = (index: number, value: string) => {
-    try {
+    },
+    
+    handleChallengerQuizAnswerChange: (index: number, value: string) => {
       const updatedAnswers = [...challengerQuizAnswers];
-      
-      while (updatedAnswers.length <= index) {
-        updatedAnswers.push('true');
-      }
-      
       updatedAnswers[index] = value;
       setChallengerQuizAnswers(updatedAnswers);
-    } catch (error) {
-      setError("챌린저 퀴즈 답변 변경 중 오류가 발생했습니다.");
-      console.error("챌린저 퀴즈 답변 변경 오류:", error);
-    }
-  };
-  
-  // 스마트 컨트랙트 배포 함수
-  const deploySmartContract = async (battle: any) => {
-    try {
-      if (!isConnected) {
-        console.log("❌ 지갑 연결 필요");
-        alert('Please connect your wallet to create a battle');
-        return null;
+    },
+    
+    handleCreateBattle: async (battleData: any) => {
+      try {
+        // 새 배틀 생성 로직 (간략화)
+        const newBattleItem = {
+          id: Date.now(),
+          title: battleData.title,
+          optionA: battleData.optionA,
+          optionB: "Open for challenge",
+          betAmount: battleData.betAmount,
+          participants: 1,
+          waiting: true,
+          creator: account
+        };
+        
+        setWaitingBattles(prev => [...prev, newBattleItem]);
+        toast.success("배틀이 생성되었습니다!");
+      } catch (error) {
+        console.error("Error creating battle:", error);
+        toast.error("배틀 생성 중 오류가 발생했습니다");
       }
-      
-      console.log("🚀 스마트 컨트랙트 배포 시작");
+    },
+    
+    handleAcceptChallenge: async () => {
+      if (!selectedChallenge || !challengeResponse) {
+        toast.error("필수 정보가 누락되었습니다");
+        return;
+      }
       
       try {
-        console.log("배틀 정보:", battle);
-        
-        // 베팅 금액 로깅
-        const betAmount = battle.betAmount.toString();
-        console.log(`베팅 금액: ${betAmount} ETH`);
-        
-        // 랜덤 ID 생성
-        const battleId = Math.floor(Math.random() * 1000000);
-        console.log(`배틀 ID: ${battleId}`);
-        
-        // Import BattleFactoryService
-        const { BattleFactoryService } = await import('../services/contracts');
-        const battleFactoryService = new BattleFactoryService(provider);
-        
-  
-        // Deploy the battle contract
-        const result = await battleFactoryService.deployBattleContract(
-          3, // minimumCommittee
-          betAmount,
-          battle.optionA, // player1Bet
-          7, // durationInDays
-          battle.title // title
-        );
-        
-        if (!result.success) {
-          console.error("Contract deployment failed:", result.message);
-          alert(result.message || "Failed to deploy battle contract");
-          return null;
-        }
-        
-        console.log("🎮 배틀 컨트랙트 배포 성공!");
-        console.log("📝 배틀 정보:", {
-          title: battle.title,
-          optionA: battle.optionA,
-          betAmount,
-          minimumCommittee: 3,
-          durationInDays: 7
-        });
-        console.log("🔗 컨트랙트 주소:", result.contractAddress);
-        console.log("🔗 트랜잭션 해시:", result.txHash);
-        console.log("✅ 컨트랙트 배포 완료");
-        
-        return {
-          address: result.contractAddress,
-          type: 'Faucet',
-          createdAt: new Date().toISOString(),
-          status: 'active',
-          txHash: result.txHash
+        // 챌린지 수락 로직 (간략화)
+        const updatedBattle = {
+          ...selectedChallenge,
+          optionB: challengeResponse,
+          waiting: false
         };
         
-      } catch (innerError) {
-        console.error("컨트랙트 배포 중 오류 발생:", innerError);
+        setWaitingBattles(prev => prev.filter(b => b.id !== selectedChallenge.id));
+        setMyBattles(prev => [...prev, updatedBattle]);
         
-        // Fallback to simulation mode for development and testing
-        console.log("Falling back to simulation mode");
-        
-        // 임의의 컨트랙트 주소 생성
-        const mockContractAddress = "0x" + Math.random().toString(16).substr(2, 40);
-        console.log("임시 컨트랙트 주소:", mockContractAddress);
-        
-        // 임의의 트랜잭션 해시 생성
-        const mockTxHash = "0x" + Math.random().toString(16).substr(2, 64);
-        console.log("임시 트랜잭션 해시:", mockTxHash);
-        
-        // 1초 대기 (실제 블록체인 트랜잭션처럼 보이게 하기 위함)
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        console.log("✅ 시뮬레이션 모드 - 배포 완료");
-        
-        return {
-          address: mockContractAddress,
-          type: 'Faucet',
-          createdAt: new Date().toISOString(),
-          status: 'active',
-          txHash: mockTxHash,
-          simulated: true
-        };
-      }
-      
-    } catch (error) {
-      console.error("❌ 컨트랙트 배포 오류:", error);
-      alert("Failed to deploy contract. Please try again.");
-      return null;
-    }
-  };
-
-  // 배틀 생성 핸들러
-  const handleCreateBattle = async (battleData?: any) => {
-    try {
-      console.log("🎮 배틀 생성 시작");
-      
-      // 전달된 데이터가 있으면 그것을 사용, 없으면 현재 상태 사용
-      const battleToCreate = battleData || newBattle;
-      console.log("📝 현재 배틀 데이터:", battleToCreate);
-      
-      // 맞춤형 검증 로직 (최소한 수동 오버라이드를 위함)
-      if (battleData) {
-        // 외부에서 전달된 데이터는 이미 검증되었다고 가정
-        console.log("⚠️ 외부 데이터 사용 중, 검증 스킵");
-      } else {
-        // 내부 폼 데이터 검증
-        console.log("Debug data:", {
-          title: battleToCreate.title,
-          optionA: battleToCreate.optionA,
-          betAmount: battleToCreate.betAmount,
-          quizCount: battleToCreate.quizCount,
-          quizzes: battleToCreate.quizzes
-        });
-        
-        // Fix: Check if quizzes exists and is an array
-        if (!battleToCreate.quizzes) {
-          battleToCreate.quizzes = Array(battleToCreate.quizCount || 2).fill('Default quiz');
-        }
-        
-        // Fix: Check if quizAnswers exists and is an array
-        if (!battleToCreate.quizAnswers) {
-          battleToCreate.quizAnswers = Array(battleToCreate.quizCount || 2).fill('true');
-        }
-        
-        if (!battleToCreate.title || !battleToCreate.optionA || !battleToCreate.betAmount) {
-          console.log("❌ 필수 필드 누락");
-          console.log("Missing fields:", {
-            title: !battleToCreate.title,
-            optionA: !battleToCreate.optionA,
-            betAmount: !battleToCreate.betAmount
-          });
-          alert('Please fill in all required fields');
-          return;
-        }
-      }
-      
-      // 항상 퀴즈 검증 건너뛰기 (테스트 용이성을 위해)
-      console.log("⚠️ 퀴즈 검증 건너뛰기");
-      battleToCreate.quizzes = battleToCreate.quizzes || ['Default quiz 1', 'Default quiz 2'];
-      battleToCreate.quizAnswers = battleToCreate.quizAnswers || ['true', 'true'];
-      
-      // 컨트랙트 배포 (또는 전달된, 이미 배포된 컨트랙트 주소 사용)
-      const contract = battleData?.contractAddress 
-        ? { address: battleData.contractAddress } 
-        : await deploySmartContract(battleToCreate);
-        
-      if (!contract) {
-        console.log("❌ 컨트랙트 배포 실패");
-        return;
-      }
-      
-      // 기본 퀴즈 내용 제공 (테스트용)
-      const defaultQuizzes = [
-        "This player has won more international trophies.",
-        "This player has a better goal-scoring record."
-      ];
-      
-      console.log("Creating battle with waiting status:", battleToCreate.waiting);
-      
-      // Ensure waiting is set to true for new battles
-      const newWaitingBattle: Battle = {
-        id: Math.max(...waitingBattles.map(battle => battle.id || 0), 0) + 1,
-        title: battleToCreate.title,
-        optionA: battleToCreate.optionA,
-        optionB: "Open for challenge",
-        betAmount: battleToCreate.betAmount,
-        participants: 1,
-        waiting: true, // Force this to true regardless of input
-        photoA: battleToCreate.photoA,
-        photoB: null,
-        quizCount: battleToCreate.quizCount || 2,
-        quizzesA: skipQuizValidation ? defaultQuizzes.slice(0, battleToCreate.quizCount || 2) : battleToCreate.quizzes,
-        quizzesAAnswers: skipQuizValidation ? Array(battleToCreate.quizCount || 2).fill('true') : battleToCreate.quizAnswers,
-        quizzesB: Array(battleToCreate.quizCount || 2).fill(''),
-        quizzesBAnswers: Array(battleToCreate.quizCount || 2).fill('true'),
-        contractAddress: contract.address,
-        contractType: 'Faucet'
-      };
-      
-      console.log("✨ 새로운 배틀 생성:", newWaitingBattle);
-      
-      setWaitingBattles(prev => {
-        const updated = [newWaitingBattle, ...prev];
-        console.log("📋 대기 중인 배틀 목록 업데이트:", updated);
-        return updated;
-      });
-
-      // 내 배틀 목록에도 추가
-      const myBattle: Battle = {
-        ...newWaitingBattle,
-        id: Math.max(...myBattles.map(battle => battle.id), 0) + 1,
-        myChoice: 'optionA'
-      };
-      
-      setMyBattles(prev => [myBattle, ...prev]);
-
-      // 입력 폼 초기화 (직접 호출 시에만)
-      if (!battleData) {
-        setNewBattle({
-          title: '',
-          optionA: '',
-          betAmount: '',
-          category: 'sports',
-          photoA: null,
-          quizCount: 1,
-          quizzes: [''],
-          quizAnswers: ['true']
-        });
-        
-        // 팝업 닫기
-        const popup = document.getElementById('newBattlePopup');
+        const popup = document.getElementById('acceptChallengePopup');
         if (popup) popup.classList.add('hidden');
+        
+        toast.success("챌린지가 수락되었습니다!");
+        setSelectedChallenge(null);
+        setChallengeResponse('');
+        setResponsePhoto(null);
+      } catch (error) {
+        console.error("Error accepting challenge:", error);
+        toast.error("챌린지 수락 중 오류가 발생했습니다");
       }
-      
-      console.log("✅ 배틀 생성 완료");
-      return contract.address;
-      
-    } catch (error) {
-      console.error("❌ 배틀 생성 오류:", error);
-      setError("배틀 생성 중 오류가 발생했습니다.");
-      return null;
-    }
-  };
-  
-  // 챌린지 수락 팝업 열기
-  const handleOpenChallenge = (battle: Battle) => {
-    try {
-      setSelectedChallenge(battle);
-      setChallengeResponse('');
-      setResponsePhoto(null);
-      
-      if (battle.quizCount) {
-        setChallengerQuizzes(Array(battle.quizCount).fill(''));
-        setChallengerQuizAnswers(Array(battle.quizCount).fill('true'));
-      } else {
-        setChallengerQuizzes([]);
-        setChallengerQuizAnswers([]);
-      }
-      
-      const popup = document.getElementById('acceptChallengePopup');
+    },
+    
+    handleJoinCommittee: (battle: Battle) => {
+      // status가 없는 경우 기본값 설정
+      const battleWithStatus = {
+        ...battle,
+        status: battle.status || {
+          isActive: true,
+          sideBettingOpen: true,
+          sideBettingDeadline: Date.now() + 86400000,
+          committeeRecruitmentOpen: true,
+          committeeCount: 0,
+          minimumCommittee: 3,
+          votingPhase: false,
+          votingDeadline: Date.now() + 172800000,
+          gameEnded: false
+        }
+      };
+      setSelectedBattleDetails(battleWithStatus);
+      setCommitteeQuizzes([]);
+      setCurrentQuizIndex(0);
+      const popup = document.getElementById('committeeQuizPopup');
       if (popup) popup.classList.remove('hidden');
-    } catch (error) {
-      setError("챌린지 팝업 열기 중 오류가 발생했습니다.");
-      console.error("챌린지 팝업 열기 오류:", error);
-    }
-  };
-  
-  // 챌린저 퀴즈 변경 핸들러
-  const handleChallengerQuizChange = (index: number, value: string) => {
-    try {
-      const updatedQuizzes = [...challengerQuizzes];
-      updatedQuizzes[index] = value;
-      setChallengerQuizzes(updatedQuizzes);
-    } catch (error) {
-      setError("챌린저 퀴즈 변경 중 오류가 발생했습니다.");
-      console.error("챌린저 퀴즈 변경 오류:", error);
-    }
-  };
-  
-  // 챌린지 수락 핸들러
-  const handleAcceptChallenge = async () => {
-    try {
-      console.log("🤝 챌린지 수락 시작");
-      
-      if (!challengeResponse || !selectedChallenge) {
-        alert('Please enter your position');
+    },
+    
+    handleSelectAnswer: (value: string) => {
+      setSelectedAnswer(value);
+    },
+    
+    handleSelectVote: (option: string) => {
+      setSelectedVote(option);
+    },
+    
+    handleSubmitVote: () => {
+      if (!selectedVote) {
+        alert("Please select either option A or option B to vote.");
         return;
       }
       
-      // Default quizzes for testing
-      const defaultQuizzes = [
-        "This player has won more championships.",
-        "This player has higher stats in major games."
-      ];
-      
-      // Skip quiz validation and use default quizzes
-      let useDefaultQuizzes = true;
-      
-      if (!useDefaultQuizzes && selectedChallenge.quizCount) {
-        const filledQuizzes = challengerQuizzes.filter(quiz => quiz.trim() !== '');
-        if (filledQuizzes.length !== selectedChallenge.quizCount) {
-          alert(`Please fill in all ${selectedChallenge.quizCount} quizzes`);
-          return;
-        }
-      }
-      
-      // 지갑 연결 확인
-      if (!isConnected || !provider) {
-        console.log("❌ 지갑 연결 필요");
-        alert('Please connect your wallet to accept a challenge');
-        return;
-      }
-      
-      // 사이드베팅 컨트랙트 배포 (Faucet 컨트랙트는 이미 존재한다고 가정)
-      console.log("🚀 SideBetting 컨트랙트 배포 시작");
-      console.log("📡 기존 Faucet 컨트랙트 주소:", selectedChallenge.contractAddress);
-      
-      // 실제 프로덕션에서는 다음과 같은 단계를 거칩니다:
-      // 1. SideBetting 컨트랙트 배포 (Faucet 주소를 인자로 전달)
-      // 2. 트랜잭션 확인 및 컨트랙트 주소 반환
-      
-      // 여기서는 시뮬레이션을 위해 랜덤한 주소 생성
-      const mockSideBettingAddress = ethers.Wallet.createRandom().address;
-      
-      console.log("✅ SideBetting 컨트랙트 배포 완료:", mockSideBettingAddress);
-      
-      // 베팅 금액 입금 시뮬레이션
-      console.log("💰 베팅 금액 입금:", selectedChallenge.betAmount, "KRW");
-      console.log("✅ 입금 완료");
-      
-      const updatedBattle: Battle = {
-        ...selectedChallenge,
-        id: Math.max(...hotBattles.map(battle => battle.id), 0) + 1,
-        optionB: challengeResponse,
-        participants: 2,
-        waiting: false, // Important: this is now set to false after being accepted
-        photoB: responsePhoto,
-        quizzesB: useDefaultQuizzes ? defaultQuizzes : challengerQuizzes,
-        quizzesBAnswers: useDefaultQuizzes ? Array(2).fill('true') : challengerQuizAnswers,
-        contractType: 'SideBetting',
-        contractAddress: mockSideBettingAddress
-      };
-      
-      console.log("🔄 배틀 상태 업데이트:", updatedBattle);
-      
-      // 핫 배틀 목록에 추가
-      setHotBattles(prev => [updatedBattle, ...prev]);
-      
-      // 대기 목록에서 제거
-      setWaitingBattles(prev => 
-        prev.filter(battle => battle.id !== selectedChallenge.id)
-      );
-      
-      // 내 배틀 목록에 추가
-      const myBattle: Battle = {
-        ...updatedBattle,
-        id: Math.max(...myBattles.map(battle => battle.id), 0) + 1,
-        myChoice: 'optionB'
-      };
-      
-      setMyBattles(prev => [myBattle, ...prev]);
-      
-      // 상태 및 UI 초기화
-      setSelectedChallenge(null);
-      setChallengeResponse('');
-      setResponsePhoto(null);
-      setChallengerQuizzes([]);
-      setChallengerQuizAnswers([]);
-      
-      const popup = document.getElementById('acceptChallengePopup');
-      if (popup) popup.classList.add('hidden');
-      
-      // 성공 메시지
-      alert('Challenge accepted successfully! A smart contract has been deployed to manage this battle.');
-      
-      console.log("✅ 챌린지 수락 완료");
-    } catch (error) {
-      console.error("❌ 챌린지 수락 오류:", error);
-      setError("챌린지 수락 중 오류가 발생했습니다.");
-      alert("Failed to accept challenge. Please try again.");
-    }
-  };
-
-  // 배틀 상태 구독
-  useEffect(() => {
-    if (selectedBattleDetails?.contractAddress) {
-      const subscribeToStatus = async () => {
-        try {
-          const { FaucetService } = await import('../services/contracts');
-          const faucetService = new FaucetService(provider);
-          const unsubscribe = await faucetService.subscribeToBattleStatus(
-            selectedBattleDetails.contractAddress || '',
-            (status) => {
-              setBattleStatus(status);
-            }
-          );
-          setUnsubscribeStatus(() => unsubscribe);
-        } catch (error) {
-          console.error("Failed to subscribe to battle status:", error);
-        }
-      };
-
-      subscribeToStatus();
-    }
-
-    return () => {
-      if (unsubscribeStatus) {
-        unsubscribeStatus();
-      }
-    };
-  }, [selectedBattleDetails?.contractAddress, provider]);
-
-  // 배틀 상태에 따른 UI 업데이트
-  useEffect(() => {
-    if (battleStatus) {
-      // 사이드 베팅 상태 업데이트
-      setShowSideBetOptions(battleStatus.sideBettingOpen);
-      
-      // 커미티 모집 상태 업데이트
-      if (battleStatus.committeeRecruitmentOpen) {
-        // 커미티 모집 UI 표시
-      }
-      
-      // 투표 단계 상태 업데이트
-      if (battleStatus.votingPhase) {
-        // 투표 UI 표시
-      }
-      
-      // 게임 종료 상태 업데이트
-      if (battleStatus.gameEnded) {
-        // 게임 종료 UI 표시
-      }
-    }
-  }, [battleStatus]);
-
-  // 모든 상태와 함수를 객체로 반환
-  return {
-    // 상태들
-    account,
-    provider,
-    isConnected,
-    featuredBattle,
-    hotBattles,
-    waitingBattles,
-    myBattles,
-    newBattle,
-    selectedChallenge,
-    challengeResponse,
-    responsePhoto,
-    challengerQuizzes,
-    challengerQuizAnswers,
-    selectedBattleDetails,
-    showSideBetOptions,
-    isCommitteeMode,
-    committeeQuizzes,
-    currentQuizIndex,
-    quizTimer,
-    timerActive,
-    selectedAnswer,
-    committeeAnswers,
-    showVotingPopup,
-    selectedVote,
-    allAnswersCorrect,
-    isLoadingBattles,
-    battleStatus,
+      setShowVotingPopup(false);
+      setSelectedVote(null);
+      alert(`Thank you for voting! Your vote has been recorded.`);
+    },
     
-    // 함수들
-    setAccount,
-    setProvider,
-    setIsConnected,
-    setHotBattles,
-    setWaitingBattles,
-    setMyBattles,
-    setNewBattle,
-    setSelectedChallenge,
-    setChallengeResponse,
-    setResponsePhoto,
-    setChallengerQuizzes,
-    setChallengerQuizAnswers,
-    setSelectedBattleDetails,
-    setShowSideBetOptions,
-    setIsCommitteeMode,
-    setCommitteeQuizzes,
-    setCurrentQuizIndex,
-    setQuizTimer,
-    setTimerActive,
-    setSelectedAnswer,
-    setCommitteeAnswers,
-    setShowVotingPopup,
-    setSelectedVote,
-    setAllAnswersCorrect,
+    // 사이드베팅 배당률 새로고침
+    refreshOdds: () => {
+      if (selectedBattleDetails?.sideBettingContract) {
+        // 배당률 계산 로직 (간략화)
+        setPlayer1Odds("1.5");
+        setPlayer2Odds("2.3");
+        toast.success("배당률이 업데이트되었습니다");
+      }
+    },
     
-    connectWallet,
-    disconnectWallet,
-    handleFileUpload,
-    handleViewBattleDetails,
-    handleJoinCommittee,
-    handleCommitteeQuizSubmit,
-    handleSelectAnswer,
-    processCommitteeResults,
-    handleSelectVote,
-    handleSubmitVote,
-    handleTimerFailure,
-    handleInputChange,
-    handleQuizChange,
-    handleQuizAnswerChange,
-    handleChallengerQuizAnswerChange,
-    handleCreateBattle,
-    handleOpenChallenge,
-    handleChallengerQuizChange,
-    handleAcceptChallenge,
-    loadBattleData
+    // 서비스들
+    battleFactoryService,
+    faucetService,
+    sideBettingService
   };
 }
