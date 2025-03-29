@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { Faucet, Faucet__factory } from '../../../contracts/typechain-types';
+import { BattleStatus } from './types';
 
 const BATTLE_FACTORY_ABI = [
   "function createBattle(uint256 battleId, address player1, uint256 minimumCommittee, uint256 betAmount) external payable returns (address)",
@@ -22,7 +23,7 @@ export class FaucetService {
     if (provider && typeof window !== 'undefined' && window.ethereum) {
       this.initializeSigner();
     }
-  }8
+  }
   
   private async initializeSigner() {
     try {
@@ -347,6 +348,187 @@ export class FaucetService {
         message: error instanceof Error ? error.message : "Unknown error"
       };
     }
+  }
+
+  /**
+   * Get real-time battle status
+   */
+  async getBattleStatus(contractAddress: string): Promise<{
+    success: boolean;
+    status?: BattleStatus;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+
+      const [
+        isActive,
+        gameDeadline,
+        committeeCount,
+        minimumCommittee,
+        gameValid,
+        gameStatus
+      ] = await Promise.all([
+        contract.gameActive(),
+        contract.gameDeadline(),
+        contract.committeeCount(),
+        contract.minimumCommittee(),
+        contract.gameValid(),
+        contract.getGameStatus()
+      ]);
+
+      const currentTime = Math.floor(Date.now() / 1000);
+      const sideBettingDeadline = Number(gameDeadline) - (7 * 24 * 60 * 60); // 7일 전에 사이드베팅 종료
+      const votingDeadline = Number(gameDeadline);
+
+      return {
+        success: true,
+        status: {
+          isActive,
+          sideBettingOpen: isActive && currentTime < sideBettingDeadline,
+          sideBettingDeadline,
+          committeeRecruitmentOpen: isActive && currentTime >= sideBettingDeadline && Number(committeeCount) < Number(minimumCommittee),
+          committeeCount: Number(committeeCount),
+          minimumCommittee: Number(minimumCommittee),
+          votingPhase: isActive && Number(committeeCount) >= Number(minimumCommittee) && currentTime < votingDeadline,
+          votingDeadline,
+          gameEnded: !isActive,
+          winner: gameStatus[0] ? await contract.player1() : await contract.player2()
+        }
+      };
+    } catch (error) {
+      console.error("Failed to get battle status:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error occurred while getting battle status"
+      };
+    }
+  }
+
+  /**
+   * Subscribe to battle status changes
+   */
+  async subscribeToBattleStatus(
+    contractAddress: string,
+    callback: (status: BattleStatus) => void
+  ): Promise<() => void> {
+    const contract = await this.connectToContract(contractAddress);
+    if (!contract) {
+      throw new Error("Failed to connect to contract");
+    }
+
+    // 이벤트 리스너 등록
+    const listeners = [
+      contract.on(contract.filters.GameStarted, async () => {
+        const status = await this.getBattleStatus(contractAddress);
+        if (status.success && status.status) {
+          callback(status.status);
+        }
+      }),
+      contract.on(contract.filters.MinimumCommitteeMet, async () => {
+        const status = await this.getBattleStatus(contractAddress);
+        if (status.success && status.status) {
+          callback(status.status);
+        }
+      }),
+      contract.on(contract.filters.VotingPhaseStarted, async () => {
+        const status = await this.getBattleStatus(contractAddress);
+        if (status.success && status.status) {
+          callback(status.status);
+        }
+      }),
+      contract.on(contract.filters.GameEnded, async () => {
+        const status = await this.getBattleStatus(contractAddress);
+        if (status.success && status.status) {
+          callback(status.status);
+        }
+      })
+    ];
+
+    // 초기 상태 가져오기
+    const initialStatus = await this.getBattleStatus(contractAddress);
+    if (initialStatus.success && initialStatus.status) {
+      callback(initialStatus.status);
+    }
+
+    // 구독 해제 함수 반환
+    return () => {
+      contract.removeAllListeners();
+    };
+  }
+
+  /**
+   * Get voting results
+   */
+  async getVotingResults(contractAddress: string): Promise<{
+    success: boolean;
+    player1Votes?: number;
+    player2Votes?: number;
+    message?: string;
+  }> {
+    try {
+      const contract = await this.connectToContract(contractAddress);
+      if (!contract) {
+        throw new Error("Failed to connect to contract");
+      }
+
+      const gameStatus = await contract.getGameStatus();
+      const [player1, player2] = await Promise.all([
+        contract.player1(),
+        contract.player2()
+      ]);
+
+      // 게임 상태에서 투표 결과를 계산
+      const player1Votes = gameStatus[0] ? 1 : 0;
+      const player2Votes = gameStatus[0] ? 0 : 1;
+
+      return {
+        success: true,
+        player1Votes,
+        player2Votes
+      };
+    } catch (error) {
+      console.error("Failed to get voting results:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error occurred while getting voting results"
+      };
+    }
+  }
+
+  /**
+   * Subscribe to voting updates
+   */
+  async subscribeToVotingUpdates(
+    contractAddress: string,
+    callback: (player1Votes: number, player2Votes: number) => void
+  ): Promise<() => void> {
+    const contract = await this.connectToContract(contractAddress);
+    if (!contract) {
+      throw new Error("Failed to connect to contract");
+    }
+
+    // 투표 이벤트 리스너 등록
+    await contract.on(contract.filters.GameEnded, async () => {
+      const results = await this.getVotingResults(contractAddress);
+      if (results.success && results.player1Votes !== undefined && results.player2Votes !== undefined) {
+        callback(results.player1Votes, results.player2Votes);
+      }
+    });
+
+    // 초기 투표 결과 가져오기
+    const initialResults = await this.getVotingResults(contractAddress);
+    if (initialResults.success && initialResults.player1Votes !== undefined && initialResults.player2Votes !== undefined) {
+      callback(initialResults.player1Votes, initialResults.player2Votes);
+    }
+
+    // 구독 해제 함수 반환
+    return () => {
+      contract.removeAllListeners();
+    };
   }
 }
 

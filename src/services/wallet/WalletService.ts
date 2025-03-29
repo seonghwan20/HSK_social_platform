@@ -1,22 +1,21 @@
-import { ethers } from 'ethers';
+import { BrowserProvider, ethers } from "ethers";
 import { formatAddress } from '../../utils/ethers';
 
 /**
  * Service for wallet-related functionality
  */
 export class WalletService {
-  private provider: ethers.providers.Web3Provider | null = null;
-  private signer: ethers.providers.JsonRpcSigner | null = null;
+  private provider: BrowserProvider | null = null;
+  private signer: any | null = null;
   
-  // Initialize with provider if available
-  constructor(provider?: ethers.providers.Web3Provider) {
+  constructor(provider?: BrowserProvider) {
     if (provider) {
       this.setProvider(provider);
     }
   }
   
   // Set provider and signer
-  setProvider(provider: ethers.providers.Web3Provider) {
+  setProvider(provider: BrowserProvider) {
     this.provider = provider;
     this.signer = provider.getSigner();
   }
@@ -28,7 +27,7 @@ export class WalletService {
     }
     
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const provider = new BrowserProvider(window.ethereum);
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       
       if (accounts.length === 0) {
@@ -50,12 +49,12 @@ export class WalletService {
     }
     
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const provider = new BrowserProvider(window.ethereum);
       const accounts = await provider.listAccounts();
       
       if (accounts.length > 0) {
         this.setProvider(provider);
-        return accounts[0];
+        return accounts[0].address;
       }
       
       return null;
@@ -73,7 +72,7 @@ export class WalletService {
     
     try {
       const balance = await this.provider.getBalance(address);
-      return ethers.utils.formatEther(balance);
+      return ethers.formatEther(balance);
     } catch (error) {
       console.error('Error getting balance:', error);
       throw error;
@@ -86,12 +85,12 @@ export class WalletService {
   }
   
   // Get provider
-  getProvider(): ethers.providers.Web3Provider | null {
+  getProvider(): BrowserProvider | null {
     return this.provider;
   }
   
   // Get signer
-  getSigner(): ethers.providers.JsonRpcSigner | null {
+  getSigner(): any | null {
     return this.signer;
   }
 }

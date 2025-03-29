@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
+import { BattleStatus } from '@/services/contracts/types';
 
 // 타입 정의
 export interface Battle {
@@ -134,6 +135,10 @@ export function useBattleLogic() {
   
   // 배틀 데이터 로딩 상태 추가
   const [isLoadingBattles, setIsLoadingBattles] = useState<boolean>(false);
+  
+  // 배틀 상태 관리
+  const [battleStatus, setBattleStatus] = useState<BattleStatus | null>(null);
+  const [unsubscribeStatus, setUnsubscribeStatus] = useState<(() => void) | null>(null);
   
   // 배틀 데이터 로딩 함수
   const loadBattleData = useCallback(async () => {
@@ -1241,6 +1246,58 @@ export function useBattleLogic() {
     }
   };
 
+  // 배틀 상태 구독
+  useEffect(() => {
+    if (selectedBattleDetails?.contractAddress) {
+      const subscribeToStatus = async () => {
+        try {
+          const { FaucetService } = await import('../services/contracts');
+          const faucetService = new FaucetService(provider);
+          const unsubscribe = await faucetService.subscribeToBattleStatus(
+            selectedBattleDetails.contractAddress || '',
+            (status) => {
+              setBattleStatus(status);
+            }
+          );
+          setUnsubscribeStatus(() => unsubscribe);
+        } catch (error) {
+          console.error("Failed to subscribe to battle status:", error);
+        }
+      };
+
+      subscribeToStatus();
+    }
+
+    return () => {
+      if (unsubscribeStatus) {
+        unsubscribeStatus();
+      }
+    };
+  }, [selectedBattleDetails?.contractAddress, provider]);
+
+  // 배틀 상태에 따른 UI 업데이트
+  useEffect(() => {
+    if (battleStatus) {
+      // 사이드 베팅 상태 업데이트
+      setShowSideBetOptions(battleStatus.sideBettingOpen);
+      
+      // 커미티 모집 상태 업데이트
+      if (battleStatus.committeeRecruitmentOpen) {
+        // 커미티 모집 UI 표시
+      }
+      
+      // 투표 단계 상태 업데이트
+      if (battleStatus.votingPhase) {
+        // 투표 UI 표시
+      }
+      
+      // 게임 종료 상태 업데이트
+      if (battleStatus.gameEnded) {
+        // 게임 종료 UI 표시
+      }
+    }
+  }, [battleStatus]);
+
   // 모든 상태와 함수를 객체로 반환
   return {
     // 상태들
@@ -1270,6 +1327,7 @@ export function useBattleLogic() {
     selectedVote,
     allAnswersCorrect,
     isLoadingBattles,
+    battleStatus,
     
     // 함수들
     setAccount,

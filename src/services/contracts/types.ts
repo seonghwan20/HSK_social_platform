@@ -56,3 +56,16 @@ export interface WalletConnectionInfo {
   networkInfo?: NetworkInfo;
   error?: string;
 }
+
+export interface BattleStatus {
+  isActive: boolean;
+  sideBettingOpen: boolean;
+  sideBettingDeadline: number;
+  committeeRecruitmentOpen: boolean;
+  committeeCount: number;
+  minimumCommittee: number;
+  votingPhase: boolean;
+  votingDeadline: number;
+  gameEnded: boolean;
+  winner?: string;
+}

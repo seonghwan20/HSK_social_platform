@@ -605,10 +605,10 @@ export default function Home() {
                   // Hard-coded battle object to bypass validation issues
                   // This is a temporary fix to ensure the create battle functionality works
                   const hardcodedBattle = {
-                    title: document.querySelector('input[name="title"]')?.value || "Battle Title",
-                    optionA: document.querySelector('input[name="optionA"]')?.value || "Player A",
+                    title: (document.querySelector('input[name="title"]') as HTMLInputElement)?.value || "Battle Title",
+                    optionA: (document.querySelector('input[name="optionA"]') as HTMLInputElement)?.value || "Player A",
                     optionB: 'Open for challenge',
-                    betAmount: document.querySelector('input[name="betAmount"]')?.value || "0.01",
+                    betAmount: (document.querySelector('input[name="betAmount"]') as HTMLInputElement)?.value || "0.01",
                     category: 'sports',
                     quizCount: 2,
                     photoA: null,

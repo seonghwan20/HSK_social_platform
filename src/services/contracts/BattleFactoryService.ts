@@ -283,7 +283,7 @@ export class BattleFactoryService {
       const writableContract = this.factoryContract.connect(signer);
       
       try {
-        const estimatedGas = await writableContract.createBattle.estimateGas(
+        const estimatedGas = await (writableContract as any).createBattle.estimateGas(
           signerAddress,
           minimumCommittee,
           betAmountWei,
@@ -296,7 +296,7 @@ export class BattleFactoryService {
         
         const gasLimit = Math.floor(Number(estimatedGas) * 1.2);
         
-        const tx = await writableContract.createBattle(
+        const tx = await (writableContract as any).createBattle(
           signerAddress,
           minimumCommittee,
           betAmountWei,
@@ -320,7 +320,7 @@ export class BattleFactoryService {
         if (receipt.logs) {
           for (const log of receipt.logs) {
             try {
-              const parsedLog = this.factoryContract.interface.parseLog({
+              const parsedLog = this.factoryContract!.interface.parseLog({
                 topics: log.topics as string[],
                 data: log.data
               });
@@ -396,19 +396,18 @@ export class BattleFactoryService {
       const writableContract = this.factoryContract.connect(signer);
       
       try {
-        const estimatedGas = await writableContract.acceptBattle.estimateGas(
+        const estimatedGas = await (writableContract as any).acceptBattle.estimateGas(
           battleId,
           player2Bet
         );
         
         const gasLimit = Math.floor(Number(estimatedGas) * 1.2);
         
-        const tx = await writableContract.acceptBattle(
+        const tx = await (writableContract as any).acceptBattle(
           battleId,
           player2Bet,
           { gasLimit }
         );
-        
         console.log("Transaction sent:", tx.hash);
         
         const receipt = await tx.wait();
@@ -423,7 +422,7 @@ export class BattleFactoryService {
         if (receipt.logs) {
           for (const log of receipt.logs) {
             try {
-              const parsedLog = this.factoryContract.interface.parseLog({
+              const parsedLog = this.factoryContract!.interface.parseLog({
                 topics: log.topics as string[],
                 data: log.data
               });
@@ -553,7 +552,7 @@ export class BattleFactoryService {
       
       return {
         success: true,
-        battleIds: battleIds.map(id => Number(id))
+        battleIds: battleIds.map((id: bigint) => Number(id))
       };
     } catch (error) {
       console.error("Failed to get battle IDs:", error);
